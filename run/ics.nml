@@ -1,0 +1,126 @@
+!=======================================================================
+!
+!   HENDOS  -  HErmite N-body Dynamics Of Systems
+!   INITIAL CONDITIONS PARAMETER FILE
+!
+!   Run with:    ./makeics ics.nml
+!                (from the HENDOS/run directory)
+!
+!   Every parameter is described in full in PARAMS_README.md
+!
+!   Units:  masses in Msun, lengths in pc, velocities in km/s
+!
+!   Format: each parameter is   name = value   followed by an optional
+!           comment after an exclamation mark. Any parameter you delete
+!           takes its standard value (shown in square brackets), and
+!           the &masses and &fractal sections can be deleted whole.
+!           Text values need quotes.
+!
+!   To make initial conditions in a way these parameters do not cover,
+!   see src/ics/ICS_README.md - the code is laid out to be changed.
+!
+!=======================================================================
+
+
+!-----------------------------------------------------------------------
+!   WHAT TO MAKE   -   change these for each set of initial conditions
+!-----------------------------------------------------------------------
+&ics
+
+  outfile = 'data/plum1k.dat'   ! file to write (its directory must
+                           !   exist). This is icfile in params.nml
+
+  n       = 1000           ! number of stars
+
+  seed    = 12345          ! random number seed - any whole number. The
+                           !   same seed gives the same stars again
+
+  distribution = 'plummer' ! 'plummer' = Plummer sphere
+                           ! 'fractal' = box fractal (see &fractal)
+                           ! 'user'    = your own: the routine
+                           !             userstructure in
+                           !             src/ics/usersubs.f90
+
+  radius  = 1.0            ! size (pc):
+                           !   plummer - the HALF-MASS radius
+                           !   fractal - the TOTAL radius
+
+  qvir    = 0.5            ! [0.5] virial ratio, kinetic / potential
+                           !   energy: 0.5 = virial equilibrium, less =
+                           !   cold, more = hot. Velocities are scaled
+                           !   to give exactly this.
+                           !   NOT USED for a Larson fractal (below)
+
+  setvirial = .true.       ! [.true.] scale the velocities to qvir.
+                           !   .false. = leave the velocities exactly
+                           !   as they were made (taken as km/s) - for
+                           !   your own structures that set their own
+
+/
+
+
+!-----------------------------------------------------------------------
+!   FRACTAL   -   only used when distribution = 'fractal'
+!-----------------------------------------------------------------------
+!   See src/ics/FRACTAL_README.md
+!-----------------------------------------------------------------------
+&fractal
+
+  fdim = 1.6               ! [1.6] fractal dimension: 3.0 = uniform,
+                           !   1.6 = very clumpy
+
+  velocities = 'standard'  ! ['standard'] how nearby stars' velocities
+                           !   are related:
+                           ! 'standard' = children inherit their
+                           !              parent's velocity plus a
+                           !              random part
+                           ! 'inherit'  = as standard, but the random
+                           !              part shrinks with box size
+                           ! 'random'   = no relation at all
+                           ! 'larson'   = follows Larson's size-
+                           !              linewidth relation. The
+                           !              velocities are then set by
+                           !              vlarson and qvir is NOT used.
+                           !              Slow for n above a few
+                           !              thousand
+
+  vlarson  = 1.0           ! [1.0] 'larson' only: size of the velocities
+                           !   (km/s). Two stars 1 pc apart differ by
+                           !   vlarson in each velocity component, and
+                           !   by vlarson*sqrt(d) at d pc. 1.0 is the
+                           !   observed relation (Solomon et al. 1987)
+
+  ndiv     = 2             ! [2]   boxes per side at each division
+
+  coresize = 0.0           ! [0.0] smallest scale in the fractal (pc),
+                           !   0 = set by the number of stars
+
+/
+
+
+!=======================================================================
+!   STANDARD SETTINGS BELOW - these should rarely need changing
+!=======================================================================
+
+
+!-----------------------------------------------------------------------
+!   MASSES   -   all stars are single
+!-----------------------------------------------------------------------
+&masses
+
+  imf = 'maschberger'      ! ['maschberger'] Maschberger (2013) IMF
+                           ! 'equal' = every star has mass mequal
+                           ! 'user'  = your own: the routine usermasses
+                           !           in src/ics/usersubs.f90
+
+  mlo   = 0.1              ! [0.1]  lowest mass (Msun)
+  mup   = 2.0              ! [2.0]  highest mass (Msun)
+
+  alpha = 2.3              ! [2.3]  high-mass slope (Salpeter = 2.35)
+  beta  = 1.4              ! [1.4]  low-mass shape
+  mu    = 0.2              ! [0.2]  mass of the turnover (Msun)
+
+  mequal = 1.0             ! [1.0]  mass of every star (Msun), only
+                           !        used when imf = 'equal'
+
+/

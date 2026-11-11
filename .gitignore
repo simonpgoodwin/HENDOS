@@ -1,0 +1,23 @@
+# built by make in run/
+run/build/
+run/hermite
+run/makeics
+*.o
+*.mod
+
+# run output: keep the directory, not what is in it
+run/data/*
+!run/data/README.md
+
+# benchmark and test output
+bench_*/
+testdata/
+
+# Python
+__pycache__/
+*.pyc
+
+# LaTeX
+*.aux
+*.log
+*.out

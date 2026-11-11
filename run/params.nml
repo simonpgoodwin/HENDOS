@@ -1,0 +1,241 @@
+!=======================================================================
+!
+!   HENDOS  -  HErmite N-body Dynamics Of Systems  -  PARAMETER FILE
+!
+!   Run with:    ./hermite params.nml | tee data/test01.log
+!                (from the HENDOS/run directory)
+!
+!   Every parameter is described in full in PARAMS_README.md
+!
+!   Units:  masses in Msun, lengths in pc, velocities in km/s,
+!           times in Myr
+!
+!   Format: each parameter is   name = value   followed by an optional
+!           comment after an exclamation mark. The order does not
+!           matter, and any parameter you delete simply takes its
+!           standard value (shown in square brackets). Whole sections
+!           can be deleted too. Text values need quotes, and
+!           switches are .true. or .false.
+!
+!=======================================================================
+
+
+!-----------------------------------------------------------------------
+!   RUN SET-UP   -   change these for each run
+!-----------------------------------------------------------------------
+&run
+
+  runid  = 'test01'        ! unique run name - starts every output file
+                           !   name. Letters, digits, - _ . only (no
+                           !   spaces). A new run will not start if
+                           !   files with this runid already exist
+
+  icfile = 'data/plum1k.dat'   ! initial conditions - a snapshot-format
+                           !   file (from makeics, or a snapshot
+                           !   of an earlier run, which restarts it from
+                           !   that time) or legacy lines
+                           !   m x y z vx vy vz. Give the directory too
+
+  tend   = 10.0            ! end time (Myr)
+
+  tout   = 0.25            ! screen output interval (Myr)
+                           !   this is also the LONGEST timestep any
+                           !   star can have
+
+  eps    = 0.0             ! softening length (pc), 0 = no softening
+                           !   (binaries are only treated with eps = 0)
+
+/
+
+
+!-----------------------------------------------------------------------
+!   OUTPUT
+!-----------------------------------------------------------------------
+!   Files (no spaces in any name, ls lists snapshots in time order),
+!   all written to the data directory:
+!     <runid>_snap_<time>Myr.dat     snapshots, e.g.
+!                                    test01_snap_000012.2500Myr.dat
+!     <runid>_ana_<name>.dat        in-run analysis
+!-----------------------------------------------------------------------
+&output
+
+  datadir = 'data'         ! ['data'] directory for the output files.
+                           !   'data' is HENDOS/run/data; any other path
+                           !   can be given, either relative to the run
+                           !   directory or in full, e.g.
+                           !   '/scratch/me/run01' or '~/nbody/run01'
+                           !   (no spaces). It is made if it does not
+                           !   exist. '.' = the run directory itself
+
+  screen = 'standard'      ! 'standard' = one line per output, to show
+                           !              all is well (production runs)
+                           ! 'verbose'  = full diagnostics (testing)
+
+  tsnap  = 1.0             ! snapshot interval (Myr), 0 = no snapshots
+                           !   should be a whole multiple of tout
+
+  dewarn = 1.0e-4          ! [1e-4] warn on screen if the relative
+                           !   energy error is larger than this
+
+/
+
+
+!-----------------------------------------------------------------------
+!   IN-RUN ANALYSIS   -   each analysis writes <runid>_ana_<name>.dat
+!-----------------------------------------------------------------------
+&analysis
+
+  tana      = 0.25        ! analysis interval (Myr), 0 = no analysis
+                           !   should be a whole multiple of tout
+
+  lagrangian = .true.      ! [.true.] 1-90% Lagrangian radii, sigma_3D
+
+  ! (energies and the energy error are only computed for the screen
+  !  output and the snapshots - they are expensive, direct-N)
+
+/
+
+
+!-----------------------------------------------------------------------
+!   GALACTIC TIDAL FIELD
+!-----------------------------------------------------------------------
+!   The cluster is on a circular Galactic orbit and the run is done in
+!   a frame rotating with it:  x points away from the Galactic centre,
+!   y in the direction of Galactic rotation, z perpendicular to the
+!   disc along the Galaxy's spin (towards the south Galactic pole).
+!   Positions and velocities (input and output) are in this frame.
+!   With a tide the energy printed is the Jacobi energy (conserved).
+!   See docs/tidal.tex
+!-----------------------------------------------------------------------
+&tides
+
+  tidal = 'none'           ! 'none'   = isolated cluster
+                           ! 'solar'  = solar neighbourhood, from the
+                           !            Oort constants and density below
+                           ! 'tensor' = your own tensor, see the bottom
+                           !            of this section
+
+  ! --- solar neighbourhood values (used when tidal = 'solar') ---------
+  oorta = 15.3             ! [15.3]  Oort A (km/s/kpc), Bovy 2017
+  oortb = -11.9            ! [-11.9] Oort B (km/s/kpc), Bovy 2017
+  rho0  = 0.097            ! [0.097] local total density (Msun/pc^3),
+                           !         McKee et al. 2015
+
+  ! --- your own tensor (used when tidal = 'tensor') ------------------
+  ! tidal acceleration is  a = T.x - 2 Omega x v  in the rotating frame,
+  ! T includes the centrifugal term. Units (km/s/kpc)^2 and km/s/kpc.
+  ! Unset components are zero. For reference the solar values are
+  ! T(1,1) = 1664.6, T(2,2) = 0, T(3,3) = -5427.5, omegat = 27.2
+  tij(1,1) = 0.0,  tij(1,2) = 0.0,  tij(1,3) = 0.0
+  tij(2,1) = 0.0,  tij(2,2) = 0.0,  tij(2,3) = 0.0
+  tij(3,1) = 0.0,  tij(3,2) = 0.0,  tij(3,3) = 0.0
+  omegat   = 0.0               ! rotation rate of the frame about z
+
+/
+
+
+!-----------------------------------------------------------------------
+!   BARNES-HUT TREE   -   for large associations on large scales
+!-----------------------------------------------------------------------
+!   Forces from an octree with monopole, quadrupole and octupole moments
+!   instead of direct summation. Energies are still direct-N, and the
+!   Galactic tide works with or without the tree.
+!-----------------------------------------------------------------------
+&tree
+
+  usetree = .false.        ! [.false.] .true. = tree forces
+                           !   (worth it for N above a few thousand)
+
+  theta   = 0.5            ! [0.5]  opening angle, between 0 and 1:
+                           !   smaller = more accurate and slower
+                           !   (force errors ~0.02% at 0.3, ~0.2% at
+                           !    0.5, ~1% at 0.7)
+
+  nleaf   = 8              ! [8]    most stars in a tree leaf
+
+/
+
+
+!=======================================================================
+!   STANDARD SETTINGS BELOW - these should rarely need changing
+!=======================================================================
+
+
+!-----------------------------------------------------------------------
+!   BINARIES   -   no regularisation
+!-----------------------------------------------------------------------
+!   An unperturbed bound pair is treated as one body with an exact
+!   Kepler orbit, so it does not force tiny timesteps; it is split
+!   back into its two stars as soon as it is perturbed. Perturbation
+!   gamma = (tidal force across the orbit) / (binary's own force).
+!   Binaries are invisible in the output (snapshots have all N stars).
+!-----------------------------------------------------------------------
+&binaries
+
+  closebinaries = .true.   ! [.true.]  use this treatment
+
+  dtclose = 100.0          ! [100]   only stars with timesteps shorter
+                           !         than this (yr) are checked for
+                           !         being in an unperturbed binary
+
+  gclose  = 1.0e-6         ! [1e-6]  treat as one body if gamma < gclose
+  gopen   = 1.0e-5         ! [1e-5]  split again if gamma > gopen
+                           !         (must be larger than gclose)
+
+/
+
+
+!-----------------------------------------------------------------------
+!   STELLAR COLLISIONS
+!-----------------------------------------------------------------------
+&collisions
+
+  rcoll = 10.0             ! [10]  stop the run with an alert if two
+                           !       stars pass within rcoll (Rsun) of
+                           !       each other, 0 = no check
+
+/
+
+
+!-----------------------------------------------------------------------
+!   INTEGRATOR
+!-----------------------------------------------------------------------
+&integrator
+
+  eta   = 0.02     ! [0.02]  Aarseth timestep accuracy parameter
+                   !         smaller = more accurate and slower
+                   !         (0.01 to 0.02 is usual)
+
+  etap  = 0.2      ! [0.2]   safety net: no step longer than etap times
+                   !         the shortest pairwise free-fall or flyby
+                   !         time - catches fast close encounters
+
+  etas  = 0.01     ! [0.01]  sets the very first timestep
+
+  niter = 1        ! [1]     corrector iterations: 1 = standard Hermite,
+                   !         2 = about 10x better energy, 2x the cost
+
+  kmax  = 40       ! [40]    deepest timestep level (1 to 60). The
+                   !         shortest allowed step is tout/2**kmax.
+                   !         Stars that want shorter steps are held at
+                   !         this level and reported on the screen
+
+/
+
+
+!-----------------------------------------------------------------------
+!   COMPUTING   -   performance only, does not change results
+!-----------------------------------------------------------------------
+!   Set the number of cores with  export OMP_NUM_THREADS=8
+!-----------------------------------------------------------------------
+&computing
+
+  nompmin = 32     ! [32]    when at least this many stars move in one
+                   !         step, the cores share out the stars
+
+  nompj   = 1024   ! [1024]  when fewer stars move, the cores share out
+                   !         the sum over all N stars instead - but only
+                   !         if N is at least this (also used for the
+                   !         other loops over all stars)
+
+/

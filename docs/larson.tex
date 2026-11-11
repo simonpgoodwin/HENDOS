@@ -1,0 +1,440 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small,columns=fullflexible,frame=single,language=Fortran}
+
+\newcommand{\bv}{\mathbf{v}}
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\kms}{\mathrm{km\,s^{-1}}}
+\newcommand{\Msun}{\mathrm{M_\odot}}
+\newcommand{\vs}{v_{\mathrm s}}
+\newcommand{\avg}[1]{\left\langle #1 \right\rangle}
+
+\title{Velocities that follow Larson's size--linewidth relation\\
+in the HENDOS fractal generator}
+\author{Sheffield star formation and dynamics group}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+The HENDOS initial conditions generator \texttt{makeics} can make a box
+fractal of stars (Goodwin \& Whitworth 2004) and give the stars
+velocities in one of four ways. One of them, \texttt{larson}
+(made by the routine \texttt{larsonfractal}), is designed so that the
+velocity difference between two stars grows as the square root of their
+separation,
+\begin{equation}
+  \delta v \propto d^{1/2},
+  \label{eq:aim}
+\end{equation}
+which is the slope of the size--linewidth relation of molecular clouds.
+This note explains how that is done, shows that the result follows
+equation~(\ref{eq:aim}) exactly on average, describes how the velocities
+are put on the observed relation in $\kms$, and compares the other three
+velocity options.
+
+The short answer: \texttt{larson} gives the right \emph{slope} at every
+scale by construction, and the \emph{normalisation} is set to the
+observed relation of Solomon et al.\ (1987). Unlike every other option
+in the generator, the velocities are therefore not scaled to a virial
+ratio: the virial ratio is an outcome. The other options do not give
+this slope.
+
+\section{The size--linewidth relation}
+
+Larson (1981) found that the velocity dispersion $\sigma$ of molecular
+clouds and of regions within them increases with their size $L$ as
+\begin{equation}
+  \sigma \simeq 1.10\,\kms\left(\frac{L}{\mathrm{pc}}\right)^{0.38}.
+\end{equation}
+Later work with more uniform data found a steeper slope; the relation
+most often quoted is that of Solomon et al.\ (1987),
+\begin{equation}
+  \sigma \simeq 0.72\,\kms\left(\frac{R}{\mathrm{pc}}\right)^{0.5},
+  \label{eq:srby}
+\end{equation}
+where $\sigma$ is the one-dimensional velocity dispersion and $R$ the
+radius of the cloud. Heyer et al.\ (2009) showed that the coefficient is
+not universal but increases with the surface density of the cloud. The
+generator aims at the slope $1/2$ of equation~(\ref{eq:srby}).
+
+The relation is a statement about gas. Using it for stars assumes that
+stars form with the velocities of the gas they form from, so that stars
+that form close together have similar velocities, and stars that form
+far apart differ by more.
+
+\section{The method}
+
+\subsection{A Gaussian velocity field with a linear covariance}
+
+Once the $N$ star positions $\bx_i$ are fixed, each Cartesian component
+of the velocities is drawn as a set of $N$ Gaussian random numbers with
+zero mean and covariance
+\begin{equation}
+  \avg{v_{i,a}\,v_{j,b}} = \delta_{ab}\,C_{ij},
+  \qquad
+  C_{ij} = \vs^2\left(D - \tfrac12 d_{ij}\right),
+  \label{eq:cov}
+\end{equation}
+where $a,b$ label the components, $d_{ij} = |\bx_i-\bx_j|$ is the
+separation of stars $i$ and $j$, $\vs$ is a velocity scale
+(\texttt{vscale}, with units of velocity per square root of length) and
+$D$ is a constant length. The code uses $D = 10\,d_{\max}$, ten times
+the largest separation in the system. The three components are
+independent of each other.
+
+\subsection{Why this gives the square-root law}
+
+The mean square difference between one component of the velocities of
+two stars is
+\begin{equation}
+  \avg{(v_{i,a}-v_{j,a})^2} = C_{ii} + C_{jj} - 2C_{ij}
+  = \vs^2 D + \vs^2 D - 2\vs^2\left(D - \tfrac12 d_{ij}\right)
+  = \vs^2\, d_{ij} .
+\end{equation}
+The constant $D$ cancels, and what is left is exactly proportional to
+the separation. Summing the three components,
+\begin{equation}
+  \avg{|\bv_i-\bv_j|^2} = 3\,\vs^2\,d_{ij},
+  \qquad\text{so}\qquad
+  \delta v_{\mathrm{rms}}(d) = \sqrt{3}\,\vs\,d^{1/2}.
+  \label{eq:sf}
+\end{equation}
+This holds for every pair of stars, at every separation, whatever the
+positions are. It does not depend on the fractal dimension.
+
+\subsection{The velocity dispersion of a region}
+
+Larson's relation is usually stated for the velocity dispersion of a
+region rather than for pairs. The two are connected by an identity: for
+any set $S$ of $n$ stars with mean velocity $\bar\bv_S$,
+\begin{equation}
+  \sigma_S^2 \equiv \frac1n\sum_{i\in S}|\bv_i-\bar\bv_S|^2
+  = \frac{1}{2n^2}\sum_{i,j\in S}|\bv_i-\bv_j|^2 .
+\end{equation}
+Taking the average with equation~(\ref{eq:sf}),
+\begin{equation}
+  \avg{\sigma_S^2} = \tfrac32\,\vs^2\,\bar d_S,
+  \qquad
+  \avg{\sigma_{S,\mathrm{1D}}^2} = \tfrac12\,\vs^2\,\bar d_S,
+  \label{eq:region}
+\end{equation}
+where $\bar d_S$ is the mean separation of pairs of stars in the region.
+The mean separation is proportional to the size of the region, so
+$\sigma \propto L^{1/2}$. For example, the mean distance between two
+points in a uniform sphere of radius $R$ is $36R/35$, so for stars spread
+uniformly through such a sphere
+\begin{equation}
+  \sigma_{\mathrm{1D}} = \left(\frac{18}{35}\right)^{1/2}\vs\,R^{1/2}
+  \simeq 0.72\,\vs\,R^{1/2}.
+\end{equation}
+By coincidence the numerical factor is the same as the coefficient in
+equation~(\ref{eq:srby}): a velocity scale $\vs =
+1\,\kms\,\mathrm{pc^{-1/2}}$ corresponds to the Solomon et al.\ relation
+for a uniformly filled region.
+
+\subsection{The constant length and the bulk velocity}
+
+Equation~(\ref{eq:cov}) gives every star a velocity variance $\vs^2 D$
+per component, which is much larger than the differences between
+stars. Almost all of it is a single velocity shared by every star: the
+correlation between any two stars is at least $1 - d_{\max}/2D = 0.95$.
+This shared velocity carries no information and is removed when the
+generator moves the stars to their centre-of-velocity frame. What
+remains are the differences, which obey equation~(\ref{eq:sf}).
+
+$D$ is needed to make equation~(\ref{eq:cov}) a valid covariance, that
+is, to make the matrix $C$ positive definite so that Gaussian numbers
+with that covariance exist. For weights $w_i$,
+\begin{equation}
+  \sum_{i,j} w_i C_{ij} w_j = \vs^2 D\Big(\sum_i w_i\Big)^2
+  - \tfrac12\vs^2\sum_{i,j} w_i\,d_{ij}\,w_j .
+\end{equation}
+For distinct points in Euclidean space the second sum is negative
+whenever $\sum_i w_i = 0$ (the distance $|\bx-\mathbf{y}|$ is
+conditionally negative definite; Schoenberg 1938), so the form is
+positive in those directions, and a large enough $D$ makes it positive
+in the remaining direction. In the tests of Section~\ref{sec:tests} the
+smallest eigenvalue of $C$ was positive in every case with $D =
+10\,d_{\max}$.
+
+\subsection{Relation to turbulent velocity fields}
+
+A Gaussian field whose increments have variance proportional to
+$d^{2H}$ is a fractional Brownian field with Hurst exponent $H$.
+Equation~(\ref{eq:sf}) is the case $H = 1/2$, for which the
+three-dimensional power spectrum of the velocity is $P(k) \propto
+k^{-(3+2H)} = k^{-4}$. This is the spectrum commonly used to set up
+turbulent velocity fields in simulations of star formation, and is that
+of Burgers (shock-dominated) turbulence. The method is therefore
+equivalent to sampling such a turbulent field at the positions of the
+stars, without having to make the field on a grid. Because the three
+components are independent, the field is a mixture of solenoidal and
+compressive motions in the natural ratio $2:1$.
+
+\section{Implementation}
+
+The routine is \texttt{larsonfractal} in
+\texttt{HENDOS/src/ics/fractalsubs.f90}. It
+\begin{enumerate}
+\item calls the routine \texttt{makefractal} to make the positions and
+  cut the number of stars to $N$;
+\item finds the largest separation $d_{\max}$ and sets $D =
+  10\,d_{\max}$;
+\item fills the $N\times N$ matrix $C$ of equation~(\ref{eq:cov});
+\item factorises it as $C = \mathsf{L}\,\mathsf{\Delta}\,
+  \mathsf{L}^{\mathsf T}$, with $\mathsf L$ unit lower triangular and
+  $\mathsf\Delta$ diagonal (a Cholesky decomposition without square
+  roots);
+\item for each component draws $N$ independent Gaussian numbers $z_k$ of
+  unit variance and sets
+  \begin{equation}
+    v_i = \sum_k \mathsf{L}_{ik}\,\Delta_k^{1/2}\,z_k ,
+  \end{equation}
+  which has covariance $\mathsf{L}\mathsf{\Delta}\mathsf{L}^{\mathsf T} =
+  C$ as required;
+\item subtracts the mean velocity.
+\end{enumerate}
+The Gaussian numbers come from \texttt{gasdev}, which uses the random
+number generator \texttt{ran3}.
+
+\paragraph{Cost.} The matrix needs $8N^2$ bytes (8\,MB for $N=10^3$,
+0.8\,GB for $N=10^4$) and the factorisation takes of order $N^3/3$
+operations. The method is practical for a few thousand stars and
+becomes slow beyond about $10^4$.
+
+\section{Normalisation}
+\label{sec:norm}
+
+For every other kind of initial conditions \texttt{makeics} multiplies
+all the velocities by one factor to give the virial ratio the user asks
+for. A Larson fractal is the exception: once the stars have their masses
+and the fractal has its size, the velocities are set to the observed
+relation in $\kms$, and the virial ratio \texttt{qvir} in the input is
+not used.
+
+\subsection{Setting the coefficient}
+
+The routine \texttt{larsonfractal} is called with radius 1 and $\vs =
+1$, so that by equation~(\ref{eq:sf}) the mean square difference of one
+velocity component between two stars equals their separation in units of
+the radius. The positions are then multiplied by the radius $R$ (in pc)
+and the velocities by
+\begin{equation}
+  \vs\,R^{1/2}, \qquad \vs = \texttt{vlarson},
+\end{equation}
+which gives, with $d$ in pc,
+\begin{equation}
+  \avg{(v_{i,a}-v_{j,a})^2} = \vs^2\,d
+  \quad(\kms)^2 .
+\end{equation}
+The input \texttt{vlarson} is therefore the rms difference, in $\kms$, of
+one velocity component between two stars 1\,pc apart. Its standard value
+is $1\,\kms$, for which equation~(\ref{eq:region}) gives a
+one-dimensional velocity dispersion of $0.72\,(R/\mathrm{pc})^{1/2}\,
+\kms$ for a region filled uniformly to radius $R$: the relation of
+Solomon et al.\ (1987), equation~(\ref{eq:srby}). Other coefficients
+(for example those that depend on surface density; Heyer et al.\ 2009)
+are obtained by changing \texttt{vlarson}. Larson's (1981) own relation
+has a different slope and cannot be matched in this way.
+
+A fractal is not uniformly filled, so the dispersion of the whole
+system is not exactly $0.72\,\vs R^{1/2}$: it is $(\bar d/2)^{1/2}\vs$,
+where $\bar d$ is the mean separation of the stars, which is smaller
+for a clumpier fractal. What is fixed is the relation between pairs of
+stars.
+
+\subsection{The virial ratio that results}
+
+From equation~(\ref{eq:region}) applied to the whole system of mass
+$M$, the kinetic energy is $T = \tfrac34 M\vs^2\bar d$ on average, so the
+virial ratio is
+\begin{equation}
+  Q = \frac{T}{|\Omega|} = \frac{3\,M\,\vs^2\,\bar d}{4\,|\Omega|} .
+  \label{eq:q}
+\end{equation}
+For a uniform sphere ($|\Omega| = 3GM^2/5R$, $\bar d = 36R/35$) this is
+\begin{equation}
+  Q = \frac97\,\frac{\vs^2 R^2}{GM}
+  \simeq 0.30\left(\frac{\vs}{1\,\kms}\right)^2
+  \left(\frac{R}{\mathrm{pc}}\right)^2
+  \left(\frac{M}{1000\,\Msun}\right)^{-1} .
+\end{equation}
+The virial ratio rises as $R^2/M$: large, low-mass systems are unbound
+and small, massive ones are cold. A clumpy fractal has a larger
+$|\Omega|$ and a smaller $\bar d$ than a uniform sphere of the same mass
+and radius, so a smaller $Q$. Table~\ref{tab:q} gives the values found
+for the standard mass function. \texttt{makeics} prints the virial ratio
+of the system it has made and records it in the file.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{cccc}
+\toprule
+$R$ (pc) & $M$ ($\Msun$) & $Q$ & $\sigma_{\mathrm{1D}}$ ($\kms$) \\
+\midrule
+0.5 & 377 & $0.10 \pm 0.04$ & 0.46 \\
+1.0 & 368 & $0.43 \pm 0.16$ & 0.68 \\
+2.0 & 375 & $1.54 \pm 0.80$ & 0.95 \\
+\bottomrule
+\end{tabular}
+\caption{Virial ratio $Q$ and one-dimensional velocity dispersion of
+Larson fractals of $N=1000$ stars, fractal dimension 1.6, with
+$\texttt{vlarson} = 1\,\kms$ and masses from the standard mass function.
+Means over six fractals; the error is the scatter between fractals.}
+\label{tab:q}
+\end{table}
+
+The scatter in $Q$ between fractals is large, because both $|\Omega|$
+and the few large-scale motions that carry most of the kinetic energy
+vary from one fractal to the next. If a particular virial ratio is
+needed as well as the Larson slope, the radius or \texttt{vlarson} can
+be adjusted until the printed value is the one wanted.
+
+\section{The other velocity options}
+
+The generator has three other velocity fields, selected by
+\texttt{velocities} in the input file and made by the routine
+\texttt{makefractal} (the \texttt{vtype} given below is its argument).
+For these the velocities are scaled to the virial ratio asked for. They are built into the fractal as
+it is made: at each level of the hierarchy a box (parent) is divided
+into eight (with the standard two boxes per side) and some of the
+children survive. Let $\delta_\ell$ be the half-width of a box at level
+$\ell$, which halves at each level.
+
+\paragraph{\texttt{inherit} (\texttt{vtype='f'}).} Each child takes its
+parent's velocity plus a Gaussian random velocity of dispersion
+$\vs\,\delta_\ell$ per component. Two stars whose last common ancestor
+is at level $\ell$ share all the kicks down to that level and differ by
+those below it, so
+\begin{equation}
+  \avg{|\bv_i-\bv_j|^2} = 6\,\vs^2\sum_{k>\ell}\delta_k^2
+  = 6\,\vs^2\delta_\ell^2\sum_{m\ge1}4^{-m} = 2\,\vs^2\delta_\ell^2 .
+\end{equation}
+Stars that separate at level $\ell$ are typically a box width apart, so
+this is $\delta v \propto d$, a slope of 1 rather than $1/2$. The
+measured slope is somewhat less than 1 (Table~\ref{tab:slopes}) because
+separation is only loosely tied to the level: stars in neighbouring
+boxes can be close together in space but have a distant common
+ancestor. A slope of $1/2$ could be made this way by using kicks
+proportional to $\delta_\ell^{1/2}$; this is not implemented.
+
+\paragraph{\texttt{standard} (\texttt{vtype='s'}).} The velocities of
+the original \texttt{makefractal}: each child takes its parent's
+velocity plus a Gaussian random velocity of the \emph{same} dispersion
+at every level. Then $\avg{|\bv_i-\bv_j|^2} \propto \ell_{\max}-\ell$,
+the number of levels below the common ancestor, which grows only as the
+logarithm of the separation. Nearby stars do have similar velocities,
+but there is no power law, and a fitted slope is small.
+
+\paragraph{\texttt{random} (\texttt{vtype='u'}).} Every star has an
+independent Gaussian velocity. The velocity difference does not depend
+on separation.
+
+\section{Tests}
+\label{sec:tests}
+
+The tests were made with a line-by-line Python copy of the routine, not
+with the Fortran, which had not been compiled when this was written.
+Fractals of $N = 1000$ stars with fractal dimension 1.6 and radius 1
+were made, the rms velocity difference of all pairs of stars was
+measured in 12 logarithmic bins of separation (from about 0.05 to 1.5),
+and a power law was fitted.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llcc}
+\toprule
+\texttt{velocities} & \texttt{vtype} & slope, \texttt{coresize} $=0$ &
+  slope, \texttt{coresize} $=0.003$ \\
+\midrule
+\texttt{larson}   & -- & $0.50 \pm 0.07$ & $0.50 \pm 0.08$ \\
+\texttt{inherit}  & \texttt{f} & $0.80 \pm 0.09$ & $0.79 \pm 0.12$ \\
+\texttt{standard} & \texttt{s} & $0.12 \pm 0.02$ & $0.10 \pm 0.02$ \\
+\texttt{random}   & \texttt{u} & $0.00 \pm 0.00$ & $0.00 \pm 0.00$ \\
+\bottomrule
+\end{tabular}
+\caption{Slope of the rms velocity difference between stars against
+their separation. Each entry is the mean over ten fractals; the error is
+the scatter between fractals, not the error on the mean.}
+\label{tab:slopes}
+\end{table}
+
+Four further checks were made of \texttt{larson}:
+\begin{itemize}
+\item Drawing 200 sets of velocities for one set of positions, the
+  ratio $\avg{|\bv_i-\bv_j|^2}/3\vs^2 d$ was between 0.99 and 1.04 in
+  every bin, confirming equation~(\ref{eq:sf}).
+\item The matrix $C$ was positive definite for every fractal made.
+\item For fractal dimensions 2.0 and 2.6 the slopes of single fractals
+  were $0.46\pm0.05$ and $0.44\pm0.05$ (five fractals each).
+\item With the velocities set as in Section~\ref{sec:norm} and
+  $\texttt{vlarson} = 1\,\kms$, the coefficient measured from the pairs
+  of stars was 1.02 to 1.04, and uniform spheres (fractal dimension 3)
+  of radius 1\,pc had $\sigma_{\mathrm{1D}} = 0.71\,\kms$, against the
+  0.72 expected.
+\end{itemize}
+
+The scatter between fractals is real and is worth remembering: any one
+set of initial conditions is a single draw, and its largest scales are
+sampled by only a few independent motions, so its measured slope can
+differ from $1/2$ by about 0.1. Fitting the logarithm of a noisy
+average also biases the slope of a single fractal slightly low. The
+relation is exact only on average.
+
+\section{Limitations}
+
+\begin{itemize}
+\item The virial ratio is not controlled: it follows from the mass and
+  size (Section~\ref{sec:norm}) and varies a good deal between fractals.
+\item The observed coefficient is not universal (Heyer et al.\ 2009); the
+  standard value is that of Solomon et al.\ (1987).
+\item The velocities are Gaussian. Real turbulence is intermittent, with
+  non-Gaussian tails, and has correlations between velocity and density
+  that are absent here: the velocity field knows about the positions of
+  the stars only through their separations.
+\item The observed relation is for gas, measured from line widths along
+  the line of sight within projected regions. The generator imposes the
+  equivalent relation between stars in three dimensions.
+\item Memory and time limit the method to about $10^4$ stars.
+\end{itemize}
+
+\section{Input file}
+
+The parameter file \texttt{ics.nml} for a Larson fractal:
+\begin{lstlisting}
+&ics
+  outfile = 'data/frac1k.dat'
+  n       = 1000
+  seed    = 12345
+  distribution = 'fractal'
+  radius  = 1.0            ! total radius (pc)
+/
+&fractal
+  fdim = 1.6
+  velocities = 'larson'
+  vlarson = 1.0            ! km/s at 1 pc
+/
+\end{lstlisting}
+Run it in \texttt{HENDOS/run} with \texttt{./makeics ics.nml}. All the
+inputs are described in the file \texttt{PARAMS\_README.md} in that
+directory.
+
+\section*{References}
+\begin{itemize}\setlength\itemsep{0pt}
+\item Goodwin S.~P., Whitworth A.~P., 2004, A\&A, 413, 929
+\item Heyer M., Krawczyk C., Duval J., Jackson J.~M., 2009, ApJ, 699,
+  1092
+\item Larson R.~B., 1981, MNRAS, 194, 809
+\item Schoenberg I.~J., 1938, Trans.\ Amer.\ Math.\ Soc., 44, 522
+\item Solomon P.~M., Rivolo A.~R., Barrett J., Yahil A., 1987, ApJ, 319,
+  730
+\end{itemize}
+
+\end{document}
