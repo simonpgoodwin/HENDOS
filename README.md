@@ -47,8 +47,8 @@ HENDOS/
     bench_kira.py        runs HENDOS and Starlab's kira on the same stars
     starlabio.py         converts to and from Starlab's dyn format
   docs/                  notes on the methods (LaTeX)
-    larson.tex           how the Larson fractals match the size-linewidth relation
-    tidal.tex            the Galactic tidal field and how it is integrated
+    larson.tex, .pdf     how the Larson fractals match the size-linewidth relation
+    tidal.tex, .pdf      the Galactic tidal field and how it is integrated
 ```
 
 ## Building and running (all from `HENDOS/run`)
