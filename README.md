@@ -1,3 +1,5 @@
+<p align="center"><img src="HENDOS_logo.jpg" alt="HENDOS logo" width="420"></p>
+
 # HENDOS - HErmite N-body Dynamics Of Systems
 
 The Sheffield group's N-body code for stellar dynamics (named after
@@ -46,6 +48,7 @@ HENDOS/
     README.md            how to run the comparison and read it
     bench_kira.py        runs HENDOS and Starlab's kira on the same stars
     starlabio.py         converts to and from Starlab's dyn format
+  HENDOS_logo.jpg        the HENDOS logo
   docs/                  notes on the methods (LaTeX)
     larson.tex, .pdf     how the Larson fractals match the size-linewidth relation
     tidal.tex, .pdf      the Galactic tidal field and how it is integrated
