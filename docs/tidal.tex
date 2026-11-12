@@ -1,0 +1,303 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small,columns=fullflexible,frame=single,language=Fortran}
+
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\bv}{\mathbf{v}}
+\newcommand{\ba}{\mathbf{a}}
+\newcommand{\bj}{\mathbf{j}}
+\newcommand{\T}{\mathsf{T}}
+\newcommand{\bO}{\boldsymbol{\Omega}}
+\newcommand{\kmskpc}{\mathrm{km\,s^{-1}\,kpc^{-1}}}
+
+\title{The Galactic tidal field in the Sheffield $N$-body code}
+\author{Sheffield star formation and dynamics group}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+The cluster is assumed to move on a circular orbit in an axisymmetric
+Galaxy. The integration is carried out in a frame centred on the
+cluster's guiding centre and rotating with the orbit, and the Galactic
+potential is expanded to second order about the guiding centre (Hill's
+approximation; e.g.\ Chandrasekhar 1942; Heggie \& Hut 2003; Renaud,
+Gieles \& Boily 2011). The external field then enters the equations of
+motion as a constant, symmetric \emph{tidal tensor} $\T$ plus the
+Coriolis force. Because $\T$ is constant in the rotating frame, the
+Jacobi energy is conserved and can be used to monitor the accuracy of
+the integration in the same way as the energy of an isolated cluster.
+
+Three options are available through the parameter \texttt{tidal} in the
+\texttt{\&tides} section of the parameter file:
+\begin{itemize}
+\item \texttt{'none'}: an isolated cluster ($\T=0$, $\Omega=0$);
+\item \texttt{'solar'}: the solar-neighbourhood field, built from the
+  Oort constants and the local mass density (Section~\ref{sec:solar});
+\item \texttt{'tensor'}: any user-supplied tensor $\T$ and frame
+  rotation rate $\Omega$.
+\end{itemize}
+
+\section{Coordinate frame}
+
+The frame rotates with angular velocity $\bO = \Omega\,\hat{\mathbf z}$
+about the cluster centre, with
+\begin{itemize}
+\item $x$ pointing away from the Galactic centre,
+\item $y$ pointing in the direction of Galactic rotation,
+\item $z$ completing a right-handed set, i.e.\ along the Galaxy's spin
+  (towards the south Galactic pole).
+\end{itemize}
+Initial positions and velocities are read, and snapshots are written,
+in this frame. Velocities are therefore velocities \emph{relative to
+the rotating frame}. A cluster that is non-rotating in an inertial frame
+appears to rotate at $-\Omega$ in this frame, but for the solar value
+($\Omega \simeq 27\,\kmskpc$) this amounts to only
+$\sim 0.03\,\mathrm{km\,s^{-1}}$ per pc of radius, which is negligible
+compared with typical velocity dispersions.
+
+\section{Equations of motion}
+
+For star $i$ at position $\bx_i$ with velocity $\bv_i$ in the rotating
+frame,
+\begin{equation}
+  \ddot{\bx}_i = \ba_{\mathrm{grav},i} + \T\bx_i - 2\bO\times\bv_i ,
+  \label{eq:eom}
+\end{equation}
+where $\ba_{\mathrm{grav},i}$ is the gravitational acceleration from
+the other stars. The term $\T\bx$ is the tidal acceleration including
+the centrifugal term, and $-2\bO\times\bv$ is the Coriolis
+acceleration. In components, with $\bO=\Omega\hat{\mathbf z}$,
+\begin{equation}
+  -2\bO\times\bv = 2\Omega\,(v_y,\,-v_x,\,0).
+\end{equation}
+
+The effective tensor is
+\begin{equation}
+  \T = \T_{\mathrm{G}} + \Omega^2\,\mathrm{diag}(1,1,0),
+  \qquad
+  (\T_{\mathrm{G}})_{kl} = -\left.\frac{\partial^2\Phi_{\mathrm{G}}}
+  {\partial x_k\,\partial x_l}\right|_{\mathrm{gc}},
+\end{equation}
+where $\Phi_{\mathrm G}$ is the Galactic potential and the derivatives
+are taken at the guiding centre. The second term is the centrifugal
+contribution of the rotating frame. $\T$ must be symmetric; if a
+non-symmetric tensor is supplied, the code warns and uses its
+symmetric part $(\T+\T^{\mathsf T})/2$.
+
+\section{The solar-neighbourhood field}
+\label{sec:solar}
+
+For an axisymmetric potential with circular speed $v_c(R)$ the angular
+velocity of the frame and the derivatives of $\Phi_{\mathrm G}$ at the
+guiding centre can be written in terms of the Oort constants
+$A = -\tfrac12 R\,\mathrm{d}\Omega/\mathrm{d}R$ and $B = A-\Omega$:
+\begin{align}
+  \Omega &= A - B, \\
+  \frac{\partial^2\Phi_{\mathrm G}}{\partial R^2} &= \Omega^2 - 4A\Omega, \\
+  \frac{1}{R}\frac{\partial\Phi_{\mathrm G}}{\partial R} &= \Omega^2, \\
+  \frac{\partial^2\Phi_{\mathrm G}}{\partial z^2} &\equiv \nu^2
+     = 4\pi G\rho_0 + 2\left(A^2 - B^2\right),
+\end{align}
+where the last line follows from Poisson's equation in cylindrical
+coordinates and $\rho_0$ is the total (stars, gas and dark matter)
+mass density at the guiding centre. Adding the centrifugal term gives
+\begin{equation}
+  \T = \mathrm{diag}\left(4A(A-B),\; 0,\; -\left[4\pi G\rho_0 +
+  2\left(A^2-B^2\right)\right]\right).
+\end{equation}
+The equations of motion then reduce to the familiar Hill equations
+\begin{align}
+  \ddot x &= a_{\mathrm{grav},x} + 4A\Omega\, x + 2\Omega\,\dot y, \\
+  \ddot y &= a_{\mathrm{grav},y} - 2\Omega\,\dot x, \\
+  \ddot z &= a_{\mathrm{grav},z} - \nu^2 z .
+\end{align}
+
+The default values are given in Table~\ref{tab:solar}. They can be
+changed in the parameter file.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Quantity & Value & Source \\
+\midrule
+$A$ & $15.3\,\kmskpc$ & Bovy (2017) \\
+$B$ & $-11.9\,\kmskpc$ & Bovy (2017) \\
+$\rho_0$ & $0.097\,\mathrm{M_\odot\,pc^{-3}}$ & McKee, Parravano \& Hollenbach (2015) \\
+\midrule
+$\Omega = A-B$ & $27.2\,\kmskpc$ & \\
+$T_{xx} = 4A\Omega$ & $1664.6\,(\kmskpc)^2$ & \\
+$T_{zz} = -\nu^2$ & $-5427.5\,(\kmskpc)^2$ & \\
+\bottomrule
+\end{tabular}
+\caption{Default solar-neighbourhood parameters and the resulting
+tidal field.}
+\label{tab:solar}
+\end{table}
+
+\subsection{Jacobi radius}
+For a cluster of mass $M$ the Jacobi (tidal) radius along the $x$-axis
+is
+\begin{equation}
+  r_{\mathrm J} = \left(\frac{GM}{T_{xx}}\right)^{1/3}
+  = \left(\frac{GM}{4A\Omega}\right)^{1/3},
+\end{equation}
+which the code prints at the start of any run with $T_{xx}>0$. For
+$M = 1000\,\mathrm{M_\odot}$ in the solar neighbourhood
+$r_{\mathrm J} \simeq 13.7$\,pc.
+
+\section{Energy}
+
+The Coriolis force does no work and $\T$ is constant and symmetric, so
+the tidal acceleration derives from the potential
+\begin{equation}
+  \Phi_{\mathrm{tid}}(\bx) = -\tfrac12\,\bx^{\mathsf T}\,\T\,\bx .
+\end{equation}
+The conserved quantity is the Jacobi energy
+\begin{equation}
+  E_{\mathrm J} = \sum_i \tfrac12 m_i |\bv_i|^2
+   \;-\; \sum_{i<j}\frac{G m_i m_j}{\left(r_{ij}^2+\epsilon^2\right)^{1/2}}
+   \;+\; \sum_i m_i\,\Phi_{\mathrm{tid}}(\bx_i),
+\end{equation}
+with velocities measured in the rotating frame. When a tide is
+switched on, the energy and relative energy error printed by the code
+are those of $E_{\mathrm J}$. The virial ratio printed is still
+$-K/W$ using the gravitational potential energy $W$ alone.
+
+\section{Implementation in the Hermite scheme}
+
+\subsection{Acceleration and jerk}
+The fourth-order Hermite scheme needs both the acceleration and its
+time derivative (the jerk) for each star. Differentiating
+equation~(\ref{eq:eom}) gives the tidal contribution to the jerk,
+\begin{equation}
+  \bj_{\mathrm{tid}} = \T\bv - 2\bO\times\ba ,
+\end{equation}
+where $\ba$ is the \emph{total} acceleration (gravitational plus tidal
+plus Coriolis). In the force routine the gravitational sum over all
+other stars is done first; the tidal and Coriolis accelerations are
+then added; and only then are the tidal jerk terms added, so that they
+use the complete acceleration:
+\begin{lstlisting}
+  ax = ax + T11*x + T12*y + T13*z + 2*omega*vy
+  ay = ay + T21*x + T22*y + T23*z - 2*omega*vx
+  az = az + T31*x + T32*y + T33*z
+  jx = jx + T11*vx + T12*vy + T13*vz + 2*omega*ay
+  jy = jy + T21*vx + T22*vy + T23*vz - 2*omega*ax
+  jz = jz + T31*vx + T32*vy + T33*vz
+\end{lstlisting}
+The cost is a few operations per active star per step, negligible
+compared with the $O(N)$ gravitational sum.
+
+\subsection{Predictor order}
+In the standard Hermite scheme positions are predicted to third order
+and velocities to second order,
+\begin{align}
+  \bx_{\mathrm p} &= \bx_0 + \bv_0\Delta t + \tfrac12\ba_0\Delta t^2
+    + \tfrac16\bj_0\Delta t^3, \\
+  \bv_{\mathrm p} &= \bv_0 + \ba_0\Delta t + \tfrac12\bj_0\Delta t^2 .
+\end{align}
+For purely gravitational forces, which depend only on positions, this
+is sufficient for fourth-order accuracy. The Coriolis force, however,
+depends on velocity, and an $O(\Delta t^3)$ error in $\bv_{\mathrm p}$
+then gives an $O(\Delta t^3)$ error in the force evaluated at the
+predicted state. This reduces the whole scheme to third order. Tests
+confirmed this: with a strong tide the energy error fell by a factor of
+$\approx 8$, not 16, for each halving of the timestep.
+
+The code therefore raises the order of the prediction used for the
+force evaluation by adding the second and third derivatives of the
+acceleration, $\ba^{(2)}$ and $\ba^{(3)}$, from the end of each star's
+previous step:
+\begin{align}
+  \bx_{\mathrm p} &\leftarrow \bx_{\mathrm p}
+     + \tfrac1{24}\ba^{(2)}\Delta t^4 + \tfrac1{120}\ba^{(3)}\Delta t^5, \\
+  \bv_{\mathrm p} &\leftarrow \bv_{\mathrm p}
+     + \tfrac16\ba^{(2)}\Delta t^3 + \tfrac1{24}\ba^{(3)}\Delta t^4 .
+\end{align}
+Here $\ba^{(2)} = \mathbf{f}_2 + \mathbf{f}_3\Delta t_{\mathrm{prev}}$
+and $\ba^{(3)} = \mathbf{f}_3$ come from the previous corrector step
+(arrays \texttt{f2e}, \texttt{f3e}); they are zero on the first step.
+The corrector itself is unchanged and still starts from the
+third-order prediction, because it adds the $\mathbf f_2$ and
+$\mathbf f_3$ terms itself; using the higher-order prediction there
+would count those terms twice. The improved prediction is also used
+for the non-active stars, which helps the accuracy of block timesteps
+in general.
+
+\subsection{Timesteps}
+No special timestep criterion is needed for the tide. The Aarseth
+criterion uses the total acceleration and its derivatives, so stars far
+from the cluster, whose motion is dominated by the tide, automatically
+take steps set by the tidal frequencies. The largest step any star can
+take is the output interval \texttt{tout}.
+
+\subsection{Units}
+Internally the code uses $G=1$, $\mathrm{M_\odot}$ and pc, giving a
+velocity unit of $0.06558\,\mathrm{km\,s^{-1}}$ and a time unit of
+$14.91$\,Myr. The tidal parameters are read in $\kmskpc$ (rates) and
+$(\kmskpc)^2$ (tensor components), and converted with
+\begin{equation}
+  1\,\kmskpc = \frac{1}{1000\,v_{\mathrm{unit}}}
+  \ \text{internal units} ,
+\end{equation}
+where $v_{\mathrm{unit}}$ is in $\mathrm{km\,s^{-1}}$. Because the
+internal mass and length units are $\mathrm{M_\odot}$ and pc with
+$G=1$, the density term $4\pi G\rho_0$ is simply $4\pi\rho_0$ with
+$\rho_0$ in $\mathrm{M_\odot\,pc^{-3}}$. The user never sees internal
+units: the tensor and $\Omega$ are echoed in $\kmskpc$ at the start of
+each run.
+
+\section{Tests}
+
+The scheme was checked with a line-by-line Python version of the code,
+using a 300-star Plummer sphere of $1000\,\mathrm{M_\odot}$ with a
+Plummer radius of 1\,pc, integrated for 8\,Myr with $\eta = 0.02$:
+\begin{itemize}
+\item The analytic tidal jerk agrees with a finite-difference
+  derivative of the acceleration along the motion, with an error that
+  falls linearly with the difference step, as it should.
+\item With the solar tide, $|\Delta E_{\mathrm J}/E_{\mathrm J}| =
+  1.7\times10^{-7}$, comparable to the isolated cluster
+  ($5.6\times10^{-7}$ with the standard predictor).
+\item With a tide 1000 times stronger than the solar value
+  ($r_{\mathrm J}\simeq1.4$\,pc, so the cluster is strongly stripped),
+  $|\Delta E_{\mathrm J}/E_{\mathrm J}| = 3.6\times10^{-6}$ with the
+  higher-order predictor, compared with $2.5\times10^{-3}$ with the
+  standard predictor, at the same cost.
+\end{itemize}
+
+\section{Parameter file}
+
+\begin{lstlisting}
+&tides
+  tidal = 'solar'     ! 'none', 'solar' or 'tensor'
+  oorta = 15.3        ! Oort A (km/s/kpc)
+  oortb = -11.9       ! Oort B (km/s/kpc)
+  rho0  = 0.097       ! local total density (Msun/pc^3)
+  ! used only when tidal = 'tensor', units (km/s/kpc)^2 and km/s/kpc
+  tij(1,1) = 1664.6,  tij(3,3) = -5427.5
+  omegat   = 27.2
+/
+\end{lstlisting}
+
+\section*{References}
+\begin{itemize}\setlength\itemsep{0pt}
+\item Bovy J., 2017, MNRAS, 468, L63
+\item Chandrasekhar S., 1942, \emph{Principles of Stellar Dynamics},
+  University of Chicago Press
+\item Heggie D., Hut P., 2003, \emph{The Gravitational Million-Body
+  Problem}, Cambridge University Press
+\item Makino J., Aarseth S.~J., 1992, PASJ, 44, 141
+\item McKee C.~F., Parravano A., Hollenbach D.~J., 2015, ApJ, 814, 13
+\item Renaud F., Gieles M., Boily C.~M., 2011, MNRAS, 418, 759
+\end{itemize}
+
+\end{document}
