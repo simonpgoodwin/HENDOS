@@ -46,6 +46,9 @@ HENDOS/
     README.md            how to run the comparison and read it
     bench_kira.py        runs HENDOS and Starlab's kira on the same stars
     starlabio.py         converts to and from Starlab's dyn format
+  docs/                  notes on the methods (LaTeX)
+    larson.tex           how the Larson fractals match the size-linewidth relation
+    tidal.tex            the Galactic tidal field and how it is integrated
 ```
 
 ## Building and running (all from `HENDOS/run`)
@@ -119,8 +122,7 @@ Fractal velocity fields: `standard` (the original makefractal velocities),
 (N = 1000, fractal dimension 1.6, ten fractals each) the rms velocity
 difference between stars rose with separation to the power 0.50 for `larson`,
 0.8 for `inherit`, 0.1 for `standard` and 0.0 for `random`. See
-`src/ics/FRACTAL_README.md`, and `larson.tex` (in the project documents with
-`tidal.tex`) for the Larson velocities.
+`src/ics/FRACTAL_README.md`, and `docs/larson.tex` for the Larson velocities.
 
 ## Units
 - Internally: G = 1, mass unit = 1 Msun, length unit = 1 pc
@@ -193,8 +195,7 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
 ## Physics options
 - **Galactic tide** (`&tides`): Hill's approximation in the rotating frame,
   'none', 'solar' (Oort A, B: Bovy 2017; rho0: McKee et al. 2015) or a user tensor.
-  Energies are Jacobi energies. Full description: `tidal.tex` (in the project
-  documents, not yet inside this directory tree).
+  Energies are Jacobi energies. Full description: `docs/tidal.tex`.
 - **Binaries** (`&binaries`, no regularisation): an unperturbed bound pair
   (gamma = 2 r_apo^3 sum m_k/d_k^3 / m_b < `gclose`) is replaced by one body with
   an exact Kepler orbit; opened again when gamma > `gopen`. Binaries in the
