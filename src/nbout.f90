@@ -321,6 +321,7 @@
      IF (usetree) THEN
        WRITE(6,'(a,f14.4)')  '    theta      ', theta
        WRITE(6,'(a,i14)')    '    nleaf      ', nleaf
+       WRITE(6,'(a,i14)')    '    ntreebuild ', ntreebuild
      END IF
      IF (closebinaries) THEN
        WRITE(6,'(a,es14.4,a)') '    dtclose    ', dtclose, ' yr'
@@ -447,7 +448,7 @@
      CALL writelevels
      WRITE(6,'(a,i0)') '   steps held at kmax this interval ', nclamp - nclamp0
      IF (usetree) WRITE(6,'(a,i12,a,i0)') '   tree nodes              ', nnode, &
-&      '   builds so far ', ntreebuild
+&      '   builds so far ', ntreebuilt
      IF (closebinaries) WRITE(6,'(a,i0,a,i0,a,i0,a)') '   binaries as one body    ', &
 &      nbin, '   (closed ', nclosed - nclosed0, ', opened ', nopened - nopened0, &
 &      ' this interval)'

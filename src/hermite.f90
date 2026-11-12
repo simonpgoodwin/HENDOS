@@ -157,17 +157,18 @@
        END DO
 !$OMP END PARALLEL DO
 !
-! tree: rebuild the topology once, on average, every body has stepped
-! (or after a binary was closed/opened), otherwise just recompute the
-! moments from the new predicted positions
+! tree: rebuild it every ntreebuild block steps (or after a binary was
+! closed/opened); on the steps in between just restock it - recompute
+! the moments from the new predicted positions. nsince counts the block
+! steps since the last rebuild
        IF (usetree) THEN
-         IF (.NOT. treevalid .OR. nsince >= n) THEN
+         IF (.NOT. treevalid .OR. nsince >= ntreebuild) THEN
            CALL treebuild
            nsince=0
          ELSE
            CALL treemoments
          END IF
-         nsince=nsince + nact
+         nsince=nsince + 1
        END IF
 !
 ! base for the corrector of the active stars: the 3rd-order prediction

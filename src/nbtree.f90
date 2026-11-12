@@ -30,11 +30,14 @@
 ! node's subtree is finished - the tree is walked without a stack.
 ! The bodies of each node are a contiguous range of tperm.
 !
-! With block timesteps the topology is rebuilt (treebuild) once, on
-! average, every body has stepped, and after any binary is closed or
-! opened; in between only the moments and bmax are recomputed from the
-! new predicted positions (treemoments, O(N)), which keeps the opening
-! criterion valid as bodies move.
+! The tree only needs to be built every so often; it is restocked every
+! step. The topology is rebuilt (treebuild) every ntreebuild block steps
+! (parameter, standard value 10), and after any binary is closed or
+! opened. On every block step in between only the moments and bmax are
+! recomputed from the new predicted positions (treemoments, O(N)). As
+! bmax is recomputed, the opening criterion stays valid as bodies move:
+! an old tree is never wrong, only slower, because its boxes overlap
+! more and more nodes have to be opened.
 !
 ! The Galactic tide is added to every star after the force sum, so it is
 ! included whether the tree is used or not. Energies are always direct.
@@ -84,7 +87,7 @@
    nnode=1
    CALL buildnode(1,1,n,centre,half,0)
    treevalid=.TRUE.
-   ntreebuild=ntreebuild + 1
+   ntreebuilt=ntreebuilt + 1
    CALL treemoments
 !
    END SUBROUTINE treebuild

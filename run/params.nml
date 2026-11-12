@@ -153,6 +153,13 @@
 
   nleaf   = 8              ! [8]    most stars in a tree leaf
 
+  ntreebuild = 10          ! [10]   rebuild the tree every ntreebuild
+                           !   block steps. In between it is only
+                           !   restocked (the moments are recomputed),
+                           !   which is cheaper. Larger = fewer rebuilds
+                           !   but slower tree walks; accuracy is not
+                           !   affected
+
 /
 
 

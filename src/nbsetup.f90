@@ -63,7 +63,7 @@
    NAMELIST /integrator/ eta, etap, etas, niter, kmax
    NAMELIST /binaries/ closebinaries, dtclose, gclose, gopen
    NAMELIST /collisions/ rcoll
-   NAMELIST /tree/ usetree, theta, nleaf
+   NAMELIST /tree/ usetree, theta, nleaf, ntreebuild
    NAMELIST /computing/ nompmin, nompj
 !
 ! defaults --------------------------------------------------
@@ -94,6 +94,7 @@
    usetree=.FALSE.
    theta=0.5d0
    nleaf=8
+   ntreebuild=10
    dtclose=100.d0
    gclose=1.d-6
    gopen=1.d-5
@@ -278,6 +279,10 @@
      END IF
      IF (nleaf < 1) THEN
        WRITE(6,'(a)') ' ERROR: nleaf must be >= 1'
+       bad=.TRUE.
+     END IF
+     IF (ntreebuild < 1) THEN
+       WRITE(6,'(a)') ' ERROR: ntreebuild must be >= 1'
        bad=.TRUE.
      END IF
    END IF

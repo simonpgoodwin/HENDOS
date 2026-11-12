@@ -206,8 +206,8 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   used for every particle type at present.
 - **Barnes-Hut tree** (`&tree`): octree with monopole, quadrupole and octupole
   moments, opening angle `theta`; jerk from monopole + internal-motion quadrupole
-  term. Topology rebuilt once every body has stepped on average, moments
-  refreshed every block. Tide works with the tree; energies stay direct.
+  term. The tree is rebuilt every `ntreebuild` block steps (standard value 10)
+  and restocked (moments recomputed) on every step in between. Tide works with the tree; energies stay direct.
 
 ## Parallelisation (OpenMP)
 Force loop parallel over active stars for big blocks (>= `nompmin`) or over the

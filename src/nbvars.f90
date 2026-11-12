@@ -45,6 +45,7 @@
     LOGICAL :: usetree               ! tree forces instead of direct summation
     DOUBLE PRECISION :: theta        ! opening angle
     INTEGER :: nleaf                 ! max bodies per leaf
+    INTEGER :: ntreebuild            ! rebuild the tree every ntreebuild block steps
 !   collisions
     DOUBLE PRECISION :: rcoll        ! stop if two stars come within rcoll (Rsun), 0 = off
 !   computing
@@ -66,7 +67,7 @@
     DOUBLE PRECISION :: dtclosei     ! dtclose in internal units
     DOUBLE PRECISION :: rcolli       ! rcoll in pc
     LOGICAL :: treevalid=.FALSE.     ! tree topology matches the bodies
-    INTEGER(KIND=8) :: ntreebuild=0  ! number of tree builds
+    INTEGER(KIND=8) :: ntreebuilt=0  ! number of tree builds so far
     INTEGER :: nbin                  ! binaries currently treated as one body
     INTEGER(KIND=8) :: nclosed,nopened ! binaries closed and opened so far
     CHARACTER(len=256) :: pfilename  ! parameter file name

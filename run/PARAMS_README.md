@@ -190,6 +190,22 @@ at 0.5 and 1 per cent at 0.7.
 The largest number of particles in the smallest boxes of the tree. Particles
 in the same box as each other are always summed directly. Rarely needs changing.
 
+### `ntreebuild` (whole number, standard value 10)
+How often the tree is rebuilt, in block steps (a block step is one pass of the
+integrator, in which every star whose timestep ends at that moment is moved).
+The tree is rebuilt from scratch every `ntreebuild` block steps. On the steps
+in between it is only restocked: the stars stay in the boxes they were put in,
+and the mass, centre and size of every box are recomputed from where the stars
+are now. Restocking is cheaper than rebuilding.
+
+It does not change the accuracy, because the size of each box is recomputed
+and the opening angle is applied to that. It changes only the speed: a tree
+that has not been rebuilt for a long time has boxes that have spread out and
+overlap, so more of them have to be opened. Too small a value wastes time
+rebuilding; too large a value slows the tree walks. It must be at least 1
+(rebuild every step). The tree is also rebuilt whenever a binary is closed or
+opened.
+
 ---
 
 ## Standard settings - these should rarely need changing
