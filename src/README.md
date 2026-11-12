@@ -64,13 +64,19 @@ No calculations: declarations of everything shared between modules.
 ## nbtree.f90 - Barnes-Hut tree (only used when `usetree` is on)
 - `treealloc` - allocates the node arrays.
 - `treebuild` - builds the octree for the current predicted positions, then
-  calls `treemoments`.
+  calls `treemoments`. The root's eight octants are built in parallel, one
+  per thread (2, 4 or 8 threads share them evenly; no more than 8 are used):
+  each thread looks through all the bodies for those in its octant and builds
+  that subtree in its own region of the node arrays; the regions are then
+  closed up, so the tree is identical to a serial build.
 - `buildnode(...)` - recursive: sorts a node's bodies into octants and makes
-  its children.
+  its children. Thread safe (its node counter is an argument).
 - `octant(x,centre)` - function: which of the 8 octants a position is in.
 - `treemoments` - mass, centre of mass, quadrupole and octupole moments,
   velocity and size of every node (leaves from bodies, then parents from
-  children). Called every block; cheaper than a rebuild.
+  children). Called every block; cheaper than a rebuild. Parallel over the
+  leaves, then over the top-level subtrees for the internal nodes.
+- `nodemoments(node)` - the moments of one internal node from its children.
 - `addpoint(...)` - adds one body to a leaf's moments.
 - `shiftadd(...)` - adds a child's moments to its parent's (parallel-axis shift).
 - `treeforce(i,...)` - acceleration, jerk, shortest pairwise timescale and
@@ -176,7 +182,8 @@ No subroutines. In order: read the parameter file name, `setunits`,
 `readparams`, `checkdatadir`, `readic`, set up the block clock, `firststep`,
 `collcheck`, `binstart`, `startinfo`, first snapshot and analysis. Then the
 loop over output intervals; inside it the loop over blocks:
-1. find the next block time and the active particles
+1. find the next block time and the active particles (the list is made in
+   parallel: one piece of the particles per thread, joined up in order)
 2. predict all particles to that time
 3. rebuild the tree or refresh its moments (if `usetree`)
 4. `forces`, then correct the active particles (`niter` times)

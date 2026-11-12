@@ -39,6 +39,7 @@
    f3e=0.d0
    tk=0
 !
+!$OMP PARALLEL DO IF(n >= nompj) PRIVATE(i,amod,jmod,dtw) SCHEDULE(STATIC)
    DO i=1,n
      amod=SQRT(f0(1,i)**2 + f0(2,i)**2 + f0(3,i)**2)
      jmod=SQRT(f1(1,i)**2 + f1(2,i)**2 + f1(3,i)**2)
@@ -47,6 +48,7 @@
      CALL getlevel(dtw,lev(i))
      dtk(i)=ISHFT(1_8,kmax - lev(i))
    END DO
+!$OMP END PARALLEL DO
 !
    END SUBROUTINE firststep
 ! =====================================================================

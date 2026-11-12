@@ -277,6 +277,10 @@ is about 9e-8 yr, so the limit should never be reached in practice.
 
 ## `&computing` - performance only (these do not change the results)
 Set the number of cores before running with `export OMP_NUM_THREADS=8`.
+The number in use is printed at the start of the run. All the expensive parts
+of the code use every core, except building the tree, which is shared out
+between at most 8 cores (one for each of the eight boxes the whole system is
+first cut into) - 2, 4 or 8 cores share that work evenly.
 
 ### `nompmin` (standard value 32)
 When at least this many particles are being moved in one step, the cores share

@@ -210,10 +210,24 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   and restocked (moments recomputed) on every step in between. Tide works with the tree; energies stay direct.
 
 ## Parallelisation (OpenMP)
-Force loop parallel over active stars for big blocks (>= `nompmin`) or over the
-j-sum with reductions for small blocks (N >= `nompj`); tree walks parallel over
-active stars; predictor, corrector, acceptance, block search, tree moments and
-energy are parallel. Binary and collision bookkeeping is serial between blocks.
+Every loop whose cost grows with N is parallel; the number of threads is set
+with `OMP_NUM_THREADS` and printed at the start of a run.
+- **Forces**: parallel over active stars for big blocks (>= `nompmin`) or over
+  the j-sum with reductions for small blocks (N >= `nompj`); tree walks
+  parallel over active stars.
+- **Each block**: block-time search, the list of active particles, predictor,
+  corrector, acceptance and new timestep levels.
+- **Tree build**: shared out at the top level - the root's eight octants are
+  built by separate threads, each looking through all the particles for those
+  in its octant. 2, 4 or 8 threads share the octants evenly and no more than 8
+  are used. The tree is identical to a serial build.
+- **Tree moments**: parallel over the leaves, then over the top-level subtrees
+  for the internal nodes.
+- **Other**: starting timesteps, energies and potentials, and the O(N) sums in
+  the binary routines (perturbation, nearest neighbour).
+
+Still serial, because they are cheap or rare: the binary and collision
+bookkeeping between blocks, output and the in-run analysis.
 
 ## Status
 Developed without a Fortran compiler: algorithms were verified with

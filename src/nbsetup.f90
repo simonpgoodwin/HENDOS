@@ -8,6 +8,7 @@
 ! integration starts
 !
    USE nbvars
+!$ USE omp_lib
    IMPLICIT NONE
 !
    CONTAINS
@@ -141,6 +142,11 @@
    REWIND(2)
    READ(2,nml=computing,iostat=ios,iomsg=msg)
    CALL nmlerror('computing')
+!
+! number of OpenMP threads (from OMP_NUM_THREADS); 1 if compiled without
+! OpenMP, as the line below is then a comment
+   nthreads=1
+!$ nthreads=MAX(1,omp_get_max_threads())
    CLOSE(2)
 !
    runid=ADJUSTL(runid)

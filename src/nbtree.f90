@@ -39,28 +39,40 @@
 ! an old tree is never wrong, only slower, because its boxes overlap
 ! more and more nodes have to be opened.
 !
+! OpenMP: the build is shared out at the top level. The root's eight
+! octants are independent, so each is given to a thread (2, 4 or 8
+! threads share them evenly; other numbers work, more than 8 are not
+! used): the thread looks through all the particles for those in its
+! octant and builds that octant's whole subtree. Each octant builds into
+! its own region of the node arrays, and the regions are then closed up
+! so that the numbering is exactly that of a serial depth-first build.
+! The moments are computed in parallel over the leaves, then over the
+! same top-level subtrees for the internal nodes.
+!
 ! The Galactic tide is added to every star after the force sum, so it is
 ! included whether the tree is used or not. Energies are always direct.
 !
    USE nbvars
    IMPLICIT NONE
    INTEGER :: nnode,nnodemax
-   INTEGER, ALLOCATABLE :: tperm(:),tfirst(:),tcount(:),tnext(:)
+   INTEGER, ALLOCATABLE :: tperm(:),tfirst(:),tcount(:),tnext(:),toct(:)
    LOGICAL, ALLOCATABLE :: tleaf(:)
    DOUBLE PRECISION, ALLOCATABLE :: tm(:),tcom(:,:),tcv(:,:),tbmax(:)
    DOUBLE PRECISION, ALLOCATABLE :: ts2(:,:,:),ts3(:,:),ttr(:),tt3(:,:)
    DOUBLE PRECISION, ALLOCATABLE :: tsd(:,:,:),tsdtr(:)
    INTEGER, PARAMETER :: maxdepth=40
+   INTEGER, PARAMETER :: nspare=125      ! spare nodes per top-level octant
 !
    CONTAINS
 ! =====================================================================
    SUBROUTINE treealloc
 !
 ! node arrays: the depth-first build uses at most ~2N/nleaf + N chains;
-! 3N + 1000 is generous, and overflow stops with a message
+! the root plus 3 nodes per body and nspare for each of the 8 top-level
+! octants is generous, and overflow stops with a message
 !
-   nnodemax=3*ntot + 1000
-   ALLOCATE(tperm(1:ntot),tfirst(1:nnodemax),tcount(1:nnodemax))
+   nnodemax=3*ntot + 8*nspare + 1
+   ALLOCATE(tperm(1:ntot),toct(1:ntot),tfirst(1:nnodemax),tcount(1:nnodemax))
    ALLOCATE(tnext(1:nnodemax),tleaf(1:nnodemax))
    ALLOCATE(tm(1:nnodemax),tcom(1:3,1:nnodemax),tcv(1:3,1:nnodemax))
    ALLOCATE(tbmax(1:nnodemax),ts2(1:3,1:3,1:nnodemax),ts3(1:10,1:nnodemax))
@@ -72,32 +84,124 @@
    SUBROUTINE treebuild
 !
 ! build the tree topology for bodies 1..n at positions rp, then the
-! moments
+! moments. The eight top-level octants are built in parallel (see the
+! top of this file).
 !
-   INTEGER :: i
-   DOUBLE PRECISION :: xmin(1:3),xmax(1:3),centre(1:3),half
+   INTEGER :: i,k,oct,nn,nused,delta
+   INTEGER :: cnt(0:7),start(0:7),base(0:7),last(0:7)
+   DOUBLE PRECISION :: xmin(1:3),xmax(1:3),centre(1:3),half,cc(1:3)
 !
+! the cube that holds all the bodies
+   xmin=HUGE(1.d0)
+   xmax=-HUGE(1.d0)
+!$OMP PARALLEL DO IF(n >= nompj) SCHEDULE(STATIC) &
+!$OMP& REDUCTION(MIN:xmin) REDUCTION(MAX:xmax)
    DO i=1,n
-     tperm(i)=i
+     xmin=MIN(xmin,rp(1:3,i))
+     xmax=MAX(xmax,rp(1:3,i))
    END DO
-   xmin=MINVAL(rp(1:3,1:n),DIM=2)
-   xmax=MAXVAL(rp(1:3,1:n),DIM=2)
+!$OMP END PARALLEL DO
    centre=0.5d0*(xmin + xmax)
    half=0.5d0*MAXVAL(xmax - xmin)*1.0001d0 + TINY(1.d0)
-   nnode=1
-   CALL buildnode(1,1,n,centre,half,0)
+!
+! the root (node 1) holds everything
+   tfirst(1)=1
+   tcount(1)=n
+   IF (n <= nleaf) THEN
+! ---- so few bodies that the root is a leaf
+     DO i=1,n
+       tperm(i)=i
+     END DO
+     tleaf(1)=.TRUE.
+     nnode=1
+   ELSE
+     tleaf(1)=.FALSE.
+!
+! top-level octant of every body, and the number in each octant
+     cnt=0
+!$OMP PARALLEL DO IF(n >= nompj) SCHEDULE(STATIC) PRIVATE(i,oct) &
+!$OMP& REDUCTION(+:cnt)
+     DO i=1,n
+       oct=octant(rp(1:3,i),centre)
+       toct(i)=oct
+       cnt(oct)=cnt(oct) + 1
+     END DO
+!$OMP END PARALLEL DO
+!
+! each octant's bodies are tperm(start:start+cnt-1), and its subtree is
+! built in its own region of the node arrays starting at node base
+     start(0)=1
+     DO oct=1,7
+       start(oct)=start(oct-1) + cnt(oct-1)
+     END DO
+     DO oct=0,7
+       base(oct)=2 + 3*(start(oct) - 1) + nspare*oct
+     END DO
+!
+! one octant per thread (up to 8 threads): look through all the bodies
+! for those in this octant, then build its subtree. Nothing is shared
+! between octants, so there are no races.
+!$OMP PARALLEL DO IF(n >= nompj) NUM_THREADS(MIN(8,nthreads)) &
+!$OMP& SCHEDULE(DYNAMIC,1) PRIVATE(oct,i,k,nn,cc)
+     DO oct=0,7
+       last(oct)=base(oct) - 1
+       IF (cnt(oct) == 0) CYCLE
+       k=start(oct)
+       DO i=1,n
+         IF (toct(i) == oct) THEN
+           tperm(k)=i
+           k=k + 1
+         END IF
+       END DO
+       cc(1)=centre(1) + SIGN(0.5d0*half,DBLE(IAND(oct,1)) - 0.5d0)
+       cc(2)=centre(2) + SIGN(0.5d0*half,DBLE(IAND(oct,2)) - 0.5d0)
+       cc(3)=centre(3) + SIGN(0.5d0*half,DBLE(IAND(oct,4)) - 0.5d0)
+       nn=base(oct)
+       CALL buildnode(base(oct),start(oct),start(oct) + cnt(oct) - 1,cc, &
+&        0.5d0*half,1,nn,base(oct) + 3*cnt(oct) + nspare - 1)
+       last(oct)=nn
+     END DO
+!$OMP END PARALLEL DO
+!
+! close up the gaps between the regions, in octant order, so the nodes
+! are numbered depth first without gaps. A region only ever moves down,
+! so copying forwards is safe. Node numbers inside a region (tnext) move
+! with it; the "next node after this subtree" then points at the start
+! of the next octant's subtree, as it must.
+     nnode=1
+     DO oct=0,7
+       IF (cnt(oct) == 0) CYCLE
+       nused=last(oct) - base(oct) + 1
+       delta=base(oct) - (nnode + 1)
+       IF (delta > 0) THEN
+         DO k=nnode + 1,nnode + nused
+           tfirst(k)=tfirst(k + delta)
+           tcount(k)=tcount(k + delta)
+           tleaf(k)=tleaf(k + delta)
+           tnext(k)=tnext(k + delta) - delta
+         END DO
+       END IF
+       nnode=nnode + nused
+     END DO
+   END IF
+   tnext(1)=nnode + 1
+!
    treevalid=.TRUE.
    ntreebuilt=ntreebuilt + 1
    CALL treemoments
 !
    END SUBROUTINE treebuild
 ! =====================================================================
-   RECURSIVE SUBROUTINE buildnode(node,ifirst,ilast,centre,half,depth)
+   RECURSIVE SUBROUTINE buildnode(node,ifirst,ilast,centre,half,depth,nn,nlim)
 !
 ! node holds bodies tperm(ifirst:ilast) in the cube centre +- half.
 ! Split into octants in place; children are created depth first.
+! nn is the last node number used so far in this subtree's region of
+! the node arrays and nlim the last one it may use. Thread safe: only
+! this subtree's nodes and its own part of tperm are written.
 !
-   INTEGER, INTENT(IN) :: node,ifirst,ilast,depth
+   INTEGER, INTENT(IN) :: node,ifirst,ilast,depth,nlim
+   INTEGER, INTENT(INOUT) :: nn
    DOUBLE PRECISION, INTENT(IN) :: centre(1:3),half
    INTEGER :: cnt(0:7),start(0:7),pos(0:7),oct,k,ip,c
    INTEGER, ALLOCATABLE :: tmp(:)
@@ -107,7 +211,7 @@
    tcount(node)=ilast - ifirst + 1
    IF (tcount(node) <= nleaf .OR. depth >= maxdepth) THEN
      tleaf(node)=.TRUE.
-     tnext(node)=nnode + 1
+     tnext(node)=nn + 1
      RETURN
    END IF
    tleaf(node)=.FALSE.
@@ -136,18 +240,19 @@
 ! children (non-empty octants only), depth first
    DO oct=0,7
      IF (cnt(oct) == 0) CYCLE
-     nnode=nnode + 1
-     IF (nnode > nnodemax) THEN
+     nn=nn + 1
+     IF (nn > nlim) THEN
        WRITE(6,'(a)') ' ERROR: tree node overflow - try a larger nleaf'
        STOP 1
      END IF
-     c=nnode
+     c=nn
      cc(1)=centre(1) + SIGN(0.5d0*half,DBLE(IAND(oct,1)) - 0.5d0)
      cc(2)=centre(2) + SIGN(0.5d0*half,DBLE(IAND(oct,2)) - 0.5d0)
      cc(3)=centre(3) + SIGN(0.5d0*half,DBLE(IAND(oct,4)) - 0.5d0)
-     CALL buildnode(c,start(oct),start(oct) + cnt(oct) - 1,cc,0.5d0*half,depth + 1)
+     CALL buildnode(c,start(oct),start(oct) + cnt(oct) - 1,cc,0.5d0*half, &
+&      depth + 1,nn,nlim)
    END DO
-   tnext(node)=nnode + 1
+   tnext(node)=nn + 1
 !
    END SUBROUTINE buildnode
 ! =====================================================================
@@ -162,12 +267,15 @@
    SUBROUTINE treemoments
 !
 ! moments, c.o.m. velocity and bmax of every node from the current rp,
-! vp: leaves directly from their bodies (in parallel), internal nodes
-! from their children with parallel-axis shifts, deepest first
-! (children always have larger node numbers than their parent)
+! vp: leaves directly from their bodies, internal nodes from their
+! children with parallel-axis shifts, deepest first (children always
+! have larger node numbers than their parent).
+! OpenMP: the leaves are shared out over the threads. The internal nodes
+! of each top-level subtree only need that subtree, so the (up to 8)
+! subtrees are shared out too, and the root is done last.
 !
-   INTEGER :: node,k,ip,c,ii,jj
-   DOUBLE PRECISION :: x(1:3),u(1:3),mt,d(1:3),w(1:3),b
+   INTEGER :: node,k,ip,c,ii,jj,is,nsub,sfirst(1:8),slast(1:8)
+   DOUBLE PRECISION :: x(1:3),u(1:3),mt,b
 !
 !$OMP PARALLEL DO IF(n >= nompj) SCHEDULE(DYNAMIC,64) PRIVATE(node,k,ip,x,u,mt,b,ii,jj)
    DO node=1,nnode
@@ -204,44 +312,29 @@
    END DO
 !$OMP END PARALLEL DO
 !
-   DO node=nnode,1,-1
-     IF (tleaf(node)) CYCLE
-     mt=0.d0
-     tcom(1:3,node)=0.d0
-     tcv(1:3,node)=0.d0
-     c=node + 1
-     DO WHILE (c < tnext(node))
-       mt=mt + tm(c)
-       tcom(1:3,node)=tcom(1:3,node) + tm(c)*tcom(1:3,c)
-       tcv(1:3,node)=tcv(1:3,node) + tm(c)*tcv(1:3,c)
+! internal nodes: the top-level subtrees (the children of the root) are
+! nodes sfirst:slast, each done deepest first by one thread
+   nsub=0
+   IF (.NOT. tleaf(1)) THEN
+     c=2
+     DO WHILE (c < tnext(1))
+       nsub=nsub + 1
+       sfirst(nsub)=c
+       slast(nsub)=tnext(c) - 1
        c=tnext(c)
      END DO
-     tm(node)=mt
-     tcom(1:3,node)=tcom(1:3,node)/mt
-     tcv(1:3,node)=tcv(1:3,node)/mt
-     ts2(1:3,1:3,node)=0.d0
-     ts3(1:10,node)=0.d0
-     tsd(1:3,1:3,node)=0.d0
-     b=0.d0
-     c=node + 1
-     DO WHILE (c < tnext(node))
-       d=tcom(1:3,c) - tcom(1:3,node)
-       w=tcv(1:3,c) - tcv(1:3,node)
-       CALL shiftadd(tm(c),d,ts2(1:3,1:3,c),ts3(1:10,c), &
-&        ts2(1:3,1:3,node),ts3(1:10,node))
-       DO jj=1,3
-         DO ii=1,3
-           tsd(ii,jj,node)=tsd(ii,jj,node) + tsd(ii,jj,c) + &
-&            tm(c)*(d(ii)*w(jj) + w(ii)*d(jj))
-         END DO
-       END DO
-       b=MAX(b,SQRT(SUM(d*d)) + tbmax(c))
-       c=tnext(c)
+   END IF
+!$OMP PARALLEL DO IF(n >= nompj) SCHEDULE(DYNAMIC,1) PRIVATE(is,node)
+   DO is=1,nsub
+     DO node=slast(is),sfirst(is),-1
+       IF (.NOT. tleaf(node)) CALL nodemoments(node)
      END DO
-     tbmax(node)=b
    END DO
+!$OMP END PARALLEL DO
+   IF (.NOT. tleaf(1)) CALL nodemoments(1)
 !
 ! derived quantities used in every evaluation: trace of S2 and T_k = S3_iik
+!$OMP PARALLEL DO IF(n >= nompj) SCHEDULE(STATIC) PRIVATE(node)
    DO node=1,nnode
      ttr(node)=ts2(1,1,node) + ts2(2,2,node) + ts2(3,3,node)
      tsdtr(node)=tsd(1,1,node) + tsd(2,2,node) + tsd(3,3,node)
@@ -249,8 +342,55 @@
      tt3(2,node)=ts3(2,node) + ts3(7,node) + ts3(9,node)
      tt3(3,node)=ts3(3,node) + ts3(8,node) + ts3(10,node)
    END DO
+!$OMP END PARALLEL DO
 !
    END SUBROUTINE treemoments
+! =====================================================================
+   SUBROUTINE nodemoments(node)
+!
+! moments, c.o.m. velocity and bmax of internal node `node` from its
+! children, which must already be done. Thread safe: only this node is
+! written.
+!
+   INTEGER, INTENT(IN) :: node
+   INTEGER :: c,ii,jj
+   DOUBLE PRECISION :: mt,d(1:3),w(1:3),b
+!
+   mt=0.d0
+   tcom(1:3,node)=0.d0
+   tcv(1:3,node)=0.d0
+   c=node + 1
+   DO WHILE (c < tnext(node))
+     mt=mt + tm(c)
+     tcom(1:3,node)=tcom(1:3,node) + tm(c)*tcom(1:3,c)
+     tcv(1:3,node)=tcv(1:3,node) + tm(c)*tcv(1:3,c)
+     c=tnext(c)
+   END DO
+   tm(node)=mt
+   tcom(1:3,node)=tcom(1:3,node)/mt
+   tcv(1:3,node)=tcv(1:3,node)/mt
+   ts2(1:3,1:3,node)=0.d0
+   ts3(1:10,node)=0.d0
+   tsd(1:3,1:3,node)=0.d0
+   b=0.d0
+   c=node + 1
+   DO WHILE (c < tnext(node))
+     d=tcom(1:3,c) - tcom(1:3,node)
+     w=tcv(1:3,c) - tcv(1:3,node)
+     CALL shiftadd(tm(c),d,ts2(1:3,1:3,c),ts3(1:10,c), &
+&      ts2(1:3,1:3,node),ts3(1:10,node))
+     DO jj=1,3
+       DO ii=1,3
+         tsd(ii,jj,node)=tsd(ii,jj,node) + tsd(ii,jj,c) + &
+&          tm(c)*(d(ii)*w(jj) + w(ii)*d(jj))
+       END DO
+     END DO
+     b=MAX(b,SQRT(SUM(d*d)) + tbmax(c))
+     c=tnext(c)
+   END DO
+   tbmax(node)=b
+!
+   END SUBROUTINE nodemoments
 ! =====================================================================
    SUBROUTINE addpoint(mp,x,s2,s3)
 !

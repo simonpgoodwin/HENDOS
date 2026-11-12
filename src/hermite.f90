@@ -13,7 +13,8 @@
 ! optional Galactic tide (Hill's approximation, rotating frame)
 ! unperturbed binaries treated as one body with an exact Kepler orbit,
 !   opened when perturbed (no regularisation)          (module nbbin)
-! force loop parallelised with OpenMP (compile with -fopenmp)
+! all the expensive loops are parallelised with OpenMP (compile with
+!   -fopenmp; the number of threads is set with OMP_NUM_THREADS)
 !
 ! This file is the main program only: set-up, then the loop over output
 ! intervals and blocks (predict, forces, correct, new timesteps).
@@ -55,7 +56,8 @@
    USE nbout
    USE nbana
    IMPLICIT NONE
-   INTEGER :: i,ia,it,iout,nout,nsnap,nana,nsince
+   INTEGER :: i,ia,it,iout,nout,nsnap,nana,nsince,ic,k,nper
+   INTEGER, ALLOCATABLE :: iscr(:),cact(:),coff(:)
    INTEGER(KIND=8) :: tblock,tend8,nblock,nforce
    DOUBLE PRECISION :: dt,dtp,time
    DOUBLE PRECISION :: a1(1:3),a2(1:3),dt2,dt3,dt4,dt5
@@ -93,6 +95,9 @@
 ! a new run must not overwrite the files of an earlier run
    IF (time0 == 0.d0) CALL checkrunid(nsnap,nana)
    IF (usetree) CALL treealloc
+!
+! work space for making the list of active particles in parallel
+   ALLOCATE(iscr(1:ntot),cact(1:nthreads),coff(1:nthreads))
 !
 ! block timestep set-up
    dtmax=tout/tunit
@@ -133,13 +138,34 @@
          tblock=MIN(tblock,tk(i) + dtk(i))
        END DO
 !$OMP END PARALLEL DO
-       nact=0
-       DO i=1,n
-         IF (tk(i) + dtk(i) == tblock) THEN
-           nact=nact + 1
-           ilist(nact)=i
-         END IF
+! the list of active particles, in order of index. The particles are cut
+! into one piece per thread; each thread lists the active ones of its
+! piece in the scratch list iscr, then the pieces are joined up in ilist
+       nper=(n + nthreads - 1)/nthreads
+!$OMP PARALLEL DO IF(n >= nompj) PRIVATE(ic,i,k) SCHEDULE(STATIC,1)
+       DO ic=1,nthreads
+         k=(ic - 1)*nper
+         DO i=(ic - 1)*nper + 1,MIN(n,ic*nper)
+           IF (tk(i) + dtk(i) == tblock) THEN
+             k=k + 1
+             iscr(k)=i
+           END IF
+         END DO
+         cact(ic)=k - (ic - 1)*nper
        END DO
+!$OMP END PARALLEL DO
+       coff(1)=0
+       DO ic=2,nthreads
+         coff(ic)=coff(ic-1) + cact(ic-1)
+       END DO
+       nact=coff(nthreads) + cact(nthreads)
+!$OMP PARALLEL DO IF(nact >= nompmin) PRIVATE(ic,k) SCHEDULE(STATIC,1)
+       DO ic=1,nthreads
+         DO k=1,cact(ic)
+           ilist(coff(ic) + k)=iscr((ic - 1)*nper + k)
+         END DO
+       END DO
+!$OMP END PARALLEL DO
 !
 ! predictor - predict ALL particles to tblock for the force calculation.
 ! Uses F0, F1 and also f2e, f3e (2nd and 3rd derivatives from each

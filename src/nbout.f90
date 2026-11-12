@@ -265,6 +265,7 @@
    WRITE(6,'(a)') dline
    WRITE(6,'(a,a)')          '  initial conditions     ', TRIM(icfile)
    WRITE(6,'(a,i14)')        '  particles              ', ntot
+   WRITE(6,'(a,i14)')        '  OpenMP threads         ', nthreads
    WRITE(6,'(a,a)')          '  particle types         ', TRIM(typecounts())
    WRITE(6,'(a,f14.2,a)')    '  total mass             ', mt, ' Msun'
    WRITE(6,'(a,f14.4,a)')    '  half-mass radius       ', rlag(2), ' pc'

@@ -201,6 +201,8 @@
 !
    ke=0.d0
    ptid=0.d0
+!$OMP PARALLEL DO IF(n >= nompj) PRIVATE(i,tx) REDUCTION(+:ke,ptid) &
+!$OMP& SCHEDULE(STATIC)
    DO i=1,n
      ke=ke + 0.5d0*m(i)*(v(1,i)**2 + v(2,i)**2 + v(3,i)**2)
      IF (ltide) THEN
@@ -208,6 +210,7 @@
        ptid=ptid - 0.5d0*m(i)*(r(1,i)*tx(1) + r(2,i)*tx(2) + r(3,i)*tx(3))
      END IF
    END DO
+!$OMP END PARALLEL DO
 !
 !$OMP PARALLEL DO PRIVATE(i,j,poti,dx,dy,dz,xi,yi,zi) SCHEDULE(STATIC)
    DO i=1,n

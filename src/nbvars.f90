@@ -51,6 +51,7 @@
 !   computing
     INTEGER :: nompmin               ! min. active stars to share them over threads
     INTEGER :: nompj                 ! min. N to share the j-sum (and O(N) loops)
+    INTEGER :: nthreads=1            ! OpenMP threads available (set in readparams)
 !   output
     CHARACTER(len=256) :: datadir    ! directory (path) for snapshot and analysis files
                                      !   (held with a trailing /, blank = run directory)
