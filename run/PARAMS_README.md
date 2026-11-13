@@ -113,6 +113,29 @@ With `restart = .true.` every member is carried on from its own restart file.
 To put the results of an ensemble together afterwards use
 `analysis/hendosensemble.py`.
 
+**Adding members to an ensemble.** An ensemble can be made bigger at any
+time. To go from 20 members to 50:
+
+1. in `ics.nml` set `nensemble = 50` and `ensfirst = 21`, and run `makeics`:
+   it writes members 21 to 50 and leaves the files of 1 to 20 alone;
+2. in `params.nml` set `nensemble = 50` and run `hermite` again: the members
+   that have been run already (those whose `.log` file exists) are left alone
+   and only the new ones are run.
+
+Nothing else must change: the new members are only members of the same
+ensemble if every other parameter is the same as for the first 20. Because
+member k always gets the seed `seed` + k - 1, the result is exactly the
+ensemble that 50 at once would have given. The old members still say
+`ensemble_size = 20` in their headers and the new ones 50; the analysis tools
+take the ensemble to be all the members they find, so that does not matter.
+To run a member again, delete its files (its `.log` file too) first.
+
+### `ensfirst` (whole number, standard value 1)
+The first member of the ensemble to run; members before it are not looked at.
+It is not needed for adding members, since members already run are skipped
+anyway, but it lets part of an ensemble be run in one place and part in
+another (`ensfirst = 26`, `nensemble = 50` runs members 26 to 50).
+
 ### `nparallel` (whole number, standard value 1)
 How many members of an ensemble are run at the same time. Each of them uses
 `OMP_NUM_THREADS` cores, so `nparallel` times `OMP_NUM_THREADS` should not be
@@ -513,6 +536,14 @@ with seed `seed` + k - 1 would make, so one member can be remade on its own.
 The header of each file records the ensemble, the member number and the seed
 used. To run them all, give `hermite` the same `nensemble` (in `&run` of
 `params.nml`) and the `outfile` name as its `icfile`.
+
+### `ensfirst` (whole number, standard value 1)
+The first member to make; members before it are not made, and their files are
+not touched. It is for adding members to an ensemble that already exists:
+with 20 members made and run, `nensemble = 50` and `ensfirst = 21` makes
+members 21 to 50. Leave `seed` and everything else as they were: member k
+always gets the seed `seed` + k - 1, so the new members are exactly what they
+would have been had all 50 been made at once.
 
 Remember that members differ in everything the random numbers decide: the
 positions and velocities, and also the masses, so the total mass differs a

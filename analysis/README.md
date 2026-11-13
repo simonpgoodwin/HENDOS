@@ -120,7 +120,10 @@ An ensemble is a set of runs that differ only in the random number seed of
 their initial conditions (`nensemble` in `ics.nml` and `params.nml`). hermite
 gives the members the runids `<name>_e001`, `<name>_e002`, ... and the tools
 here recognise an ensemble from those names: nothing has to be listed, and
-members that are missing or still running are left out and reported.
+members that are missing or still running are left out and reported. An
+ensemble is whatever members are there when the tool is run, so after members
+have been added to an ensemble, running `hendosensemble.py` again collates
+the bigger ensemble and replaces the old tables and plots.
 
 ```
 python hendosensemble.py data              lists the ensembles in data/

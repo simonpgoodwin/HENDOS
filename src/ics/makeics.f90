@@ -11,6 +11,11 @@
 ! data/plum1k_e002.dat, ... Member k is exactly what a single run with
 ! seed + k - 1 would make. hermite runs the whole ensemble if it is
 ! given the same nensemble (see run/PARAMS_README.md).
+! To ADD MEMBERS to an ensemble later, raise nensemble and set ensfirst
+! to the first new member: nensemble = 50, ensfirst = 21 makes members
+! 21 to 50 and leaves the files of members 1 to 20 alone. (Because
+! member k always has seed + k - 1, the new members are the same as if
+! all 50 had been made at once.)
 ! The input is in the parameter file (default ics.nml), described in
 ! run/PARAMS_README.md. How to change this code is described below
 ! and, at more length, in src/ics/ICS_README.md.
@@ -97,6 +102,7 @@
    INTEGER :: n                        ! number of stars
    INTEGER :: seed                     ! random number seed
    INTEGER :: nensemble                ! number of sets to make (1 = just one)
+   INTEGER :: ensfirst                 ! first member to make (1 unless adding members)
    CHARACTER(len=16) :: distribution   ! 'plummer', 'fractal' or 'user'
    DOUBLE PRECISION :: radius          ! pc: half-mass (plummer), total (fractal)
    DOUBLE PRECISION :: qvir            ! virial ratio
@@ -154,7 +160,7 @@
 ! (just one pass if nensemble = 1). Only the seed and the file name
 ! differ between members.
 ! =====================================================================
-   DO imem=1,nensemble
+   DO imem=ensfirst,nensemble
    seedmem=seed + imem - 1
    outname=outfile
    IF (nensemble > 1) outname=ensname(outfile,imem)
@@ -223,8 +229,9 @@
    CALL writeics
    END DO
 !
-   IF (nensemble > 1) WRITE(6,'(a,i0,a,a,a,a)') '  ensemble of ', nensemble, &
-&    ' written: ', TRIM(ensname(outfile,1)), ' to ', TRIM(ensname(outfile,nensemble))
+   IF (nensemble > 1) WRITE(6,'(a,i0,a,i0,a,i0,a,a,a,a)') '  members ', ensfirst, &
+&    ' to ', nensemble, ' of an ensemble of ', nensemble, ' written: ', &
+&    TRIM(ensname(outfile,ensfirst)), ' to ', TRIM(ensname(outfile,nensemble))
 !
    CONTAINS
 ! =====================================================================
@@ -628,7 +635,7 @@
    CHARACTER(len=256) :: msg
 ! >>> NEW PARAMETER: add it to the namelist of its section
    NAMELIST /ics/ outfile, n, seed, distribution, radius, qvir, setvirial, &
-&    nensemble
+&    nensemble, ensfirst
    NAMELIST /masses/ imf, mlo, mup, alpha, beta, mu, mequal
    NAMELIST /fractal/ fdim, ndiv, velocities, coresize, vlarson
 !
@@ -638,6 +645,7 @@
    n=1000
    seed=12345
    nensemble=1
+   ensfirst=1
    distribution='plummer'
    radius=1.d0
    qvir=0.5d0
@@ -678,6 +686,8 @@
    IF (INDEX(TRIM(outfile),' ') > 0) CALL bad('outfile name must not contain spaces')
    IF (n < 2) CALL bad('n must be at least 2')
    IF (nensemble < 1) CALL bad('nensemble must be at least 1')
+   IF (ensfirst < 1 .OR. ensfirst > nensemble) &
+&    CALL bad('ensfirst must be between 1 and nensemble')
    IF (radius <= 0.d0) CALL bad('radius must be > 0')
    IF (qvir < 0.d0) CALL bad('qvir must be >= 0')
    IF (TRIM(imf) == 'maschberger') THEN

@@ -200,8 +200,9 @@ class Ensemble:
     datadir, name
     members         the member numbers found, in order
     runs            their Run objects, in the same order
-    size            the number of members the ensemble was run with
-                    (from the snapshot headers; None if they do not say)
+    size            the number of members the ensemble was run with (the
+                    largest in the snapshot headers, as members can be
+                    added later; None if the headers do not say)
     missing         member numbers between 1 and size with no snapshots
     run(member)     the Run of one member
     """
@@ -211,13 +212,17 @@ class Ensemble:
         self.name = name
         self.members = find_ensembles(datadir).get(name, [])
         self.runs = [Run(datadir, self.runid(k)) for k in self.members]
+        # members can be added to an ensemble later, so they need not all
+        # say the same size: take the largest (and never less than the
+        # highest member number found)
         self.size = None
         for run in self.runs:
             if run.nsnap:
                 header = read_header(run.paths[0])[0]
                 if 'ensemble_size' in header:
-                    self.size = int(float(header['ensemble_size']))
-                break
+                    self.size = max(self.size or 0, int(float(header['ensemble_size'])))
+        if self.size and self.members:
+            self.size = max(self.size, max(self.members))
         top = self.size or (max(self.members) if self.members else 0)
         self.missing = [k for k in range(1, top + 1) if k not in self.members]
 

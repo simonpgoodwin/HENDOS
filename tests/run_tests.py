@@ -473,7 +473,8 @@ def test_restart_neighbours(t):
 
 
 def test_ensemble(t):
-    """An ensemble of three runs, each with its own output files."""
+    """An ensemble of three runs, each with its own output files; then two
+    more members are added to it."""
     for k in (1, 2, 3):
         m, pos, vel = plummer(32, seed=10 + k)
         t.write_ics('ics_e%03d.dat' % k, m, pos, vel)
@@ -495,6 +496,21 @@ def test_ensemble(t):
         t.check('member %d: its own log file' % k,
                 os.path.exists(member.file('.log')), True, 'equal')
     t.check('members differ from each other', len(set(ends)), 3, 'equal')
+    # add two members to the ensemble: only the new ones should be run
+    before = os.path.getmtime(RunResult(t.dir, 'ens_e001').file('.log'))
+    for k in (4, 5):
+        m, pos, vel = plummer(32, seed=10 + k)
+        t.write_ics('ics_e%03d.dat' % k, m, pos, vel)
+    r = t.run('ens', 'ics.dat', need_snaps=False, run__tend=0.5, run__nensemble=5,
+              run__nparallel=3)
+    t.check("adding members: '2 of 2 members ran to the end'",
+            '2 of 2 members ran to the end' in r.log, True, 'equal')
+    t.check('adding members: member 1 was left alone',
+            os.path.getmtime(RunResult(t.dir, 'ens_e001').file('.log')) == before,
+            True, 'equal')
+    new = RunResult(t.dir, 'ens_e005')
+    new.read()
+    t.check('adding members: member 5 has snapshots', len(new.snaps), 3, 'equal')
 
 
 # ----------------------------------------------------------------------

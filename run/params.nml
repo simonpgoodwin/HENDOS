@@ -53,6 +53,13 @@
                            !   run gets _e001, ... added to its runid,
                            !   so has its own output files
 
+                           !   To ADD members later just raise this
+                           !   (and make their initial conditions):
+                           !   members already run are left alone
+
+  ensfirst  = 1            ! [1] first member to run (members before
+                           !   it are not looked at)
+
   nparallel = 1            ! [1] how many runs of the ensemble are
                            !   done at the same time. Each uses
                            !   OMP_NUM_THREADS cores

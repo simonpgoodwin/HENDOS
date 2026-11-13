@@ -43,6 +43,12 @@
                            !   plum1k_e002.dat, ... Give hermite the
                            !   same nensemble to run them all
 
+  ensfirst  = 1            ! [1] first member to make. To ADD members
+                           !   to an ensemble, raise nensemble and set
+                           !   this to the first new one: nensemble =
+                           !   50, ensfirst = 21 makes members 21 to 50
+                           !   and leaves members 1 to 20 alone
+
   distribution = 'plummer' ! 'plummer' = Plummer sphere
                            ! 'fractal' = box fractal (see &fractal)
                            ! 'user'    = your own: the routine

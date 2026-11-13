@@ -86,7 +86,10 @@ Each member is a separate run with its own files: its runid is the `runid` of
 the parameter file with `_e001`, `_e002`, ... added, its screen output goes to
 `<datadir>/<runid>_e001.log`, and the headers of its files say which ensemble
 and which member it is. `./hermite params.nml 7` runs member 7 alone.
-`hendosensemble.py` finds the members from their file names and writes, for
+Members can be added later: raise `nensemble` in both files (with `ensfirst`
+set to the first new member in `ics.nml`) and run both programs again; the
+members already run are left alone. `hendosensemble.py` finds the members
+from their file names, however many there are now, and writes, for
 every analysis, the mean, scatter, median and percentiles over the members
 against time, a plot of each, a one-line-per-member summary, and all the
 mergers in one file. See `run/PARAMS_README.md` and `analysis/README.md`.

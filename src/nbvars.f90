@@ -23,6 +23,7 @@
 !   ensembles (see runensemble in module nbsetup)
     INTEGER :: nensemble             ! number of runs in the ensemble (1 = a single run)
     INTEGER :: nparallel             ! members of the ensemble run at the same time
+    INTEGER :: ensfirst              ! first member to run (1 unless adding members)
     INTEGER :: ensmember=0           ! which member this run is (0 = not in an ensemble)
     CHARACTER(len=32) :: ensbase=''  ! runid of the ensemble (without the member number)
     CHARACTER(len=256) :: ensicfile=''   ! icfile of the ensemble (likewise)

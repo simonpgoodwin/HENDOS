@@ -68,6 +68,8 @@ No calculations: declarations of everything shared between modules.
   initial conditions file get the member number.
 - `runensemble` - runs every member of an ensemble, `nparallel` at a time, each
   as a separate run of `hermite` with its screen output in its own log file.
+  Members that have been run before are left alone, so members can be added
+  to an ensemble by raising `nensemble`.
 - `allocarrays` - allocates all the particle and binary arrays.
 - `readic` - reads the initial conditions (NBODY-SNAPSHOT 2 with types,
   version 1 without, or legacy `m x y z vx vy vz`), sets ids and types,

@@ -57,7 +57,8 @@
    LOGICAL :: bad
    DOUBLE PRECISION :: fconv,pi
    CHARACTER(len=256) :: msg
-   NAMELIST /run/ runid, icfile, tend, tout, eps, restart, nensemble, nparallel
+   NAMELIST /run/ runid, icfile, tend, tout, eps, restart, nensemble, nparallel, &
+&    ensfirst
    NAMELIST /output/ datadir, screen, tsnap, dewarn, trestart
    NAMELIST /analysis/ tana, lagrangian
    NAMELIST /tides/ tidal, oorta, oortb, rho0, tij, omegat
@@ -101,6 +102,7 @@
    trestart=0.d0
    nensemble=1
    nparallel=1
+   ensfirst=1
    useac=.FALSE.
    nnbopt=0
    nnbmax=0
@@ -326,6 +328,10 @@
 &      'between 1 and 64'
      bad=.TRUE.
    END IF
+   IF (ensfirst < 1 .OR. ensfirst > nensemble) THEN
+     WRITE(6,'(a)') ' ERROR: ensfirst must be between 1 and nensemble'
+     bad=.TRUE.
+   END IF
    IF (nensemble > 1 .AND. LEN_TRIM(runid) > 26) THEN
      WRITE(6,'(a)') ' ERROR: runid must be 26 characters or fewer for an '// &
 &      'ensemble (the member number is added to it)'
@@ -495,7 +501,19 @@
 ! A member can also be run on its own in the same way by hand (or as
 ! one job of a job array on a cluster):   ./hermite params.nml 7
 !
-   INTEGER :: k,k1,k2,ist,ios,nfail,nmiss,l
+! ADDING MEMBERS LATER. An ensemble can be made bigger at any time:
+! make the extra initial conditions (makeics with the larger nensemble
+! and ensfirst = the first new member), raise nensemble here and run
+! again. Members that have been run already - those whose log file
+! exists - are left alone and only the new ones are run, so nothing
+! else has to be changed. (ensfirst in &run does the same by hand:
+! only members ensfirst to nensemble are looked at.) The members of an
+! ensemble need not all have been run with the same nensemble; the
+! analysis tools take the ensemble to be all the members they find.
+! To run a member again, delete its files first.
+!
+   INTEGER :: k,k1,k2,ist,ios,nfail,nmiss,l,ntodo,ndone,kk
+   INTEGER, ALLOCATABLE :: todo(:)
    INTEGER(KIND=8) :: c0,c1,crate
    CHARACTER(len=256) :: exe,logf,statf
    CHARACTER(len=16) :: num
@@ -511,6 +529,7 @@
    WRITE(6,'(a,a)') '  HENDOS - HErmite N-body Dynamics Of Systems     ensemble: ', TRIM(runid)
    WRITE(6,'(a)') ' =============================================================================='
    WRITE(6,'(a,i14)')  '  members                ', nensemble
+   IF (ensfirst > 1) WRITE(6,'(a,i14)') '  starting at member     ', ensfirst
    WRITE(6,'(a,i14)')  '  run at the same time   ', nparallel
    WRITE(6,'(a,i14)')  '  threads for each       ', nthreads
    WRITE(6,'(a,a,a,a)') '  initial conditions     ', TRIM(ensname(TRIM(icfile),1)), &
@@ -518,10 +537,39 @@
    WRITE(6,'(a,a,a)')  '  screen output of each  ', TRIM(datadir), '<runid>_e<member>.log'
    IF (restart) WRITE(6,'(a)') '  every member is restarted from its restart file'
 !
+! which members are to be run: all of them on a restart, otherwise the
+! ones that have not been run before (no log file yet)
+   ALLOCATE(todo(1:nensemble))
+   ntodo=0
+   ndone=0
+   DO k=ensfirst,nensemble
+     ex=.FALSE.
+     IF (.NOT. restart) INQUIRE(file=TRIM(datadir)// &
+&      TRIM(ensname(TRIM(runid),k))//'.log',exist=ex)
+     IF (ex) THEN
+       ndone=ndone + 1
+     ELSE
+       ntodo=ntodo + 1
+       todo(ntodo)=k
+     END IF
+   END DO
+   IF (ndone > 0) THEN
+     WRITE(6,'(a,i14,a)') '  already run            ', ndone, &
+&      '  (their log files exist: left alone)'
+     WRITE(6,'(a,i14)')   '  to run now             ', ntodo
+   END IF
+   IF (ntodo == 0) THEN
+     WRITE(6,'(a)') '  Every member has been run already. To add members raise '// &
+&      'nensemble; to run one'
+     WRITE(6,'(a)') '  again delete its files (including its .log file) first.'
+     RETURN
+   END IF
+!
 ! all the initial conditions must be there before anything is started
    nmiss=0
    IF (.NOT. restart) THEN
-     DO k=1,nensemble
+     DO kk=1,ntodo
+       k=todo(kk)
        INQUIRE(file=TRIM(ensname(TRIM(icfile),k)),exist=ex)
        IF (.NOT. ex) THEN
          nmiss=nmiss + 1
@@ -532,19 +580,22 @@
    END IF
    IF (nmiss > 0) THEN
      WRITE(6,'(a,i0,a)') ' ERROR: ', nmiss, ' of the initial conditions files '// &
-&      'are missing. Make them with makeics and the same nensemble.'
+&      'are missing. Make them with makeics and the same nensemble'
+     WRITE(6,'(a)') '        (and ensfirst = the first new member, if members '// &
+&      'are being added).'
      STOP 1
    END IF
    WRITE(6,'(a)') ' ------------------------------------------------------------------------------'
 !
    nfail=0
-   DO k1=1,nensemble,nparallel
-     k2=MIN(nensemble,k1 + nparallel - 1)
+   DO k1=1,ntodo,nparallel
+     k2=MIN(ntodo,k1 + nparallel - 1)
 ! one shell command that starts members k1 to k2 together and waits for
 ! them all; each writes its exit status to a small file when it ends
      cmd=''
      l=0
-     DO k=k1,k2
+     DO kk=k1,k2
+       k=todo(kk)
        WRITE(num,'(i0)') k
        logf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.log'
        statf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.status'
@@ -556,7 +607,8 @@
      CALL SYSTEM_CLOCK(c0,crate)
      CALL EXECUTE_COMMAND_LINE(TRIM(cmd))
      CALL SYSTEM_CLOCK(c1)
-     DO k=k1,k2
+     DO kk=k1,k2
+       k=todo(kk)
        statf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.status'
        ist=-1
        OPEN(9,file=TRIM(statf),status='old',iostat=ios)
@@ -573,14 +625,15 @@
 &          TRIM(datadir)//TRIM(ensname(TRIM(runid),k)), '.log'
        END IF
      END DO
-     WRITE(6,'(a,i0,a,i0,a,f0.1,a)') '    (members ', k1, ' to ', k2, ' took ', &
-&      DBLE(c1 - c0)/DBLE(crate), ' s)'
+     WRITE(6,'(a,i0,a,i0,a,f0.1,a)') '    (members ', todo(k1), ' to ', todo(k2), &
+&      ' took ', DBLE(c1 - c0)/DBLE(crate), ' s)'
      FLUSH(6)
    END DO
 !
    WRITE(6,'(a)') ' =============================================================================='
-   WRITE(6,'(a,i0,a,i0,a)') '  ensemble finished: ', nensemble - nfail, ' of ', &
-&    nensemble, ' members ran to the end'
+   WRITE(6,'(a,i0,a,i0,a)') '  ensemble finished: ', ntodo - nfail, ' of ', &
+&    ntodo, ' members ran to the end'
+   IF (ndone > 0) WRITE(6,'(a,i0,a)') '  (', ndone, ' members had been run before)'
    IF (nfail > 0) WRITE(6,'(a,i0,a)') '  ** ', nfail, ' stopped early: look at their log files'
    WRITE(6,'(a)') ' =============================================================================='
    IF (nfail > 0) STOP 1
