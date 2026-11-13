@@ -166,6 +166,71 @@ def find_runs(datadir):
     return dict(sorted(runs.items()))
 
 
+# ----------------------------------------------------------------------
+# Ensembles: runs that differ only in the random number seed of their
+# initial conditions. hermite gives the members the runids
+# <name>_e001, <name>_e002, ... and writes the keys 'ensemble',
+# 'ensemble_member' and 'ensemble_size' in the headers of their files.
+ENS_RE = re.compile(r'^(?P<name>.+)_e(?P<member>\d{3,})$')
+
+
+def ensemble_of(runid):
+    """(ensemble name, member number) if the runid is that of a member of
+    an ensemble, otherwise None."""
+    match = ENS_RE.match(runid)
+    if not match:
+        return None
+    return match.group('name'), int(match.group('member'))
+
+
+def find_ensembles(datadir):
+    """The ensembles with snapshots in datadir: a dictionary
+    ensemble name -> sorted list of the member numbers found."""
+    found = {}
+    for runid in find_runs(datadir):
+        ens = ensemble_of(runid)
+        if ens:
+            found.setdefault(ens[0], []).append(ens[1])
+    return {name: sorted(members) for name, members in sorted(found.items())}
+
+
+class Ensemble:
+    """All the runs of one ensemble.
+
+    datadir, name
+    members         the member numbers found, in order
+    runs            their Run objects, in the same order
+    size            the number of members the ensemble was run with
+                    (from the snapshot headers; None if they do not say)
+    missing         member numbers between 1 and size with no snapshots
+    run(member)     the Run of one member
+    """
+
+    def __init__(self, datadir, name):
+        self.datadir = datadir
+        self.name = name
+        self.members = find_ensembles(datadir).get(name, [])
+        self.runs = [Run(datadir, self.runid(k)) for k in self.members]
+        self.size = None
+        for run in self.runs:
+            if run.nsnap:
+                header = read_header(run.paths[0])[0]
+                if 'ensemble_size' in header:
+                    self.size = int(float(header['ensemble_size']))
+                break
+        top = self.size or (max(self.members) if self.members else 0)
+        self.missing = [k for k in range(1, top + 1) if k not in self.members]
+
+    def runid(self, member):
+        return '%s_e%03d' % (self.name, member)
+
+    def run(self, member):
+        return self.runs[self.members.index(member)]
+
+    def __len__(self):
+        return len(self.members)
+
+
 class Run:
     """All the output files of one run.
 

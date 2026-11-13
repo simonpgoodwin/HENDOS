@@ -20,6 +20,12 @@
 ! parameters read from the parameter file (see readparams) ----
 !   run set-up, physical units
     CHARACTER(len=32) :: runid       ! run name, used in output file names
+!   ensembles (see runensemble in module nbsetup)
+    INTEGER :: nensemble             ! number of runs in the ensemble (1 = a single run)
+    INTEGER :: nparallel             ! members of the ensemble run at the same time
+    INTEGER :: ensmember=0           ! which member this run is (0 = not in an ensemble)
+    CHARACTER(len=32) :: ensbase=''  ! runid of the ensemble (without the member number)
+    CHARACTER(len=256) :: ensicfile=''   ! icfile of the ensemble (likewise)
     CHARACTER(len=256) :: icfile     ! initial conditions file
     DOUBLE PRECISION :: tend         ! end time (Myr)
     DOUBLE PRECISION :: tout         ! output interval and largest step (Myr)

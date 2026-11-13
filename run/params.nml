@@ -45,6 +45,18 @@
   eps    = 0.0             ! softening length (pc), 0 = no softening
                            !   (binaries are only treated with eps = 0)
 
+  nensemble = 1            ! [1] number of runs. More than 1 runs an
+                           !   ENSEMBLE: one run for each of the
+                           !   initial conditions files icfile with
+                           !   _e001, _e002, ... in its name (made by
+                           !   makeics with the same nensemble). Each
+                           !   run gets _e001, ... added to its runid,
+                           !   so has its own output files
+
+  nparallel = 1            ! [1] how many runs of the ensemble are
+                           !   done at the same time. Each uses
+                           !   OMP_NUM_THREADS cores
+
   restart = .false.        ! [.false.] .true. = carry this run on from
                            !   its restart file (see trestart below)
                            !   instead of starting from icfile

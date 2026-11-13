@@ -49,6 +49,7 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `header_flexible` | a run started from a snapshot with an unknown header key and an extra column added | keys follow the physics; the changed file is read correctly |
 | `merger` | two stars collide head on beside a third | one star fewer; mass and momentum conserved; merger file, screen alert and header count; id of the more massive kept |
 | `merger_off` | the same with `mergers = .false.` | the run stops with the collision alert |
+| `ensemble` | three sets of initial conditions run as one ensemble, all at once | every member finishes with its own snapshots, log and header labels; the members differ |
 | `restart` | a run stopped half way and restarted | ends where the unbroken run ends (positions to 1e-9 pc) |
 | `restart_neighbours` | the same with the neighbour scheme | the same |
 

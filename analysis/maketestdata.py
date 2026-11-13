@@ -3,6 +3,7 @@ HENDOS - HErmite N-body Dynamics Of Systems
 Make a small set of TEST files for trying out the viewer.
 
     python maketestdata.py [directory]        (default: testdata)
+    python maketestdata.py [directory] 5      a test ENSEMBLE of 5 runs as well
 
 THIS IS NOT A HENDOS RUN. It is a crude softened leapfrog integration of a
 few hundred stars, written only so that there is something in the right
@@ -10,7 +11,10 @@ file format to look at before a real run exists. The files are marked as
 test data in their headers. Do not use them for science.
 
 It writes  demo_snap_<time>Myr.dat  and  demo_ana_lagrangian.dat  in the
-HENDOS formats (NBODY-SNAPSHOT 2 and NBODY-ANALYSIS 1).
+HENDOS formats (NBODY-SNAPSHOT 2 and NBODY-ANALYSIS 1). With a number after
+the directory it also writes that many smaller runs, demoens_e001, _e002, ...
+which differ only in their random number seed, named and labelled as hermite
+names and labels the members of an ensemble, for trying hendosensemble.py.
 """
 import os
 import sys
@@ -35,9 +39,10 @@ def accel_phi(m, r, eps):
     return a, phi
 
 
-def main(outdir):
-    rng = np.random.default_rng(42)
-    n, nsnap, tend, eps = 300, 41, 10.0, 0.02
+def main(outdir, runid='demo', seed=42, n=300, nsnap=41, ensemble=None):
+    """One test run. ensemble = (name, member, size) marks it as a member."""
+    rng = np.random.default_rng(seed)
+    tend, eps = 10.0, 0.02
     os.makedirs(outdir, exist_ok=True)
 
     # Plummer-like positions, IMF-like masses, a cold start so it evolves
@@ -83,11 +88,16 @@ def main(outdir):
         lag_rows.append([time] + lag + [sig])
 
         it = int(round(time * 1e4))
-        name = os.path.join(outdir, 'demo_snap_%06d.%04dMyr.dat' % (it // 10000, it % 10000))
+        name = os.path.join(outdir, '%s_snap_%06d.%04dMyr.dat' % (runid, it // 10000,
+                                                                 it % 10000))
         with open(name, 'w') as f:
             f.write(header_line('format', 'NBODY-SNAPSHOT 2'))
             f.write(header_line('creator', 'maketestdata.py - TEST DATA, NOT A HENDOS RUN'))
-            f.write(header_line('runid', 'demo'))
+            f.write(header_line('runid', runid))
+            if ensemble:
+                f.write(header_line('ensemble', ensemble[0]))
+                f.write(header_line('ensemble_member', str(ensemble[1])))
+                f.write(header_line('ensemble_size', str(ensemble[2])))
             f.write(header_line('n', str(n)))
             f.write(header_line('total_mass_Msun', '%.16E' % mtot))
             f.write(header_line('units', 'mass Msun, length pc, velocity km/s, '
@@ -116,19 +126,26 @@ def main(outdir):
                 a, _ = accel_phi(m, r, eps)
                 v += 0.5 * dt * a * KMS_TO_PC_MYR
 
-    with open(os.path.join(outdir, 'demo_ana_lagrangian.dat'), 'w') as f:
+    with open(os.path.join(outdir, runid + '_ana_lagrangian.dat'), 'w') as f:
         f.write(header_line('format', 'NBODY-ANALYSIS 1'))
         f.write(header_line('analysis', 'lagrangian'))
         f.write(header_line('creator', 'maketestdata.py - TEST DATA, NOT A HENDOS RUN'))
-        f.write(header_line('runid', 'demo'))
+        f.write(header_line('runid', runid))
         f.write(header_line('columns',
                             'time r1% r2% r5% r10% r20% r30% r50% r70% r90% sigma3d'))
         f.write(header_line('column_units', 'Myr pc pc pc pc pc pc pc pc pc km/s'))
         f.write('# end_header\n')
         for row in lag_rows:
             f.write('%16.6f' % row[0] + ''.join('%15.6E' % q for q in row[1:]) + '\n')
-    print('wrote %d test snapshots and one analysis file to %s' % (nsnap, outdir))
+    print('wrote %d test snapshots and one analysis file of %s to %s'
+          % (nsnap, runid, outdir))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else 'testdata')
+    directory = sys.argv[1] if len(sys.argv) > 1 else 'testdata'
+    main(directory)
+    if len(sys.argv) > 2:
+        size = int(sys.argv[2])
+        for member in range(1, size + 1):
+            main(directory, runid='demoens_e%03d' % member, seed=100 + member, n=120,
+                 nsnap=21, ensemble=('demoens', member, size))

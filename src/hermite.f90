@@ -18,6 +18,10 @@
 !   regularisation)                               (modules nbbin, nbfew)
 ! stellar collisions: the stars are merged (or the run stops)
 ! optional binary restart files for long runs       (module nbrestart)
+! ensembles: nensemble > 1 runs one simulation for each of a set of
+!   initial conditions, each with its own output files; a second
+!   command-line argument runs one member only
+!                                      (runensemble, module nbsetup)
 ! all the expensive loops are parallelised with OpenMP (compile with
 !   -fopenmp; the number of threads is set with OMP_NUM_THREADS)
 !
@@ -66,6 +70,8 @@
    USE nbana
    IMPLICIT NONE
    INTEGER :: i,ia,it,iout,iout0,nout,nsnap,nana,nrest,nsince,ic,k,nper
+   INTEGER :: member,ios
+   CHARACTER(len=32) :: arg
    INTEGER, ALLOCATABLE :: iscr(:),cact(:),coff(:)
    INTEGER(KIND=8) :: tblock,tend8,nblock,nforce
    DOUBLE PRECISION :: dt,dtp,time
@@ -83,6 +89,27 @@
    CALL setunits
    CALL readparams(pfilename)
    CALL checkdatadir
+!
+! ensembles (nensemble > 1 in the parameter file). With a member number
+! as the second thing on the command line this run is that member;
+! without one, this program just starts a run for every member in turn
+! and then stops (see runensemble in module nbsetup)
+   member=0
+   IF (COMMAND_ARGUMENT_COUNT() >= 2) THEN
+     CALL GET_COMMAND_ARGUMENT(2,arg)
+     READ(arg,*,iostat=ios) member
+     IF (ios /= 0 .OR. member < 1) THEN
+       WRITE(6,'(a,a)') ' ERROR: the ensemble member number is not a whole '// &
+&        'number > 0: ', TRIM(arg)
+       STOP 1
+     END IF
+   END IF
+   IF (member > 0) THEN
+     CALL setmember(member)
+   ELSE IF (nensemble > 1) THEN
+     CALL runensemble
+     STOP
+   END IF
    eps2=eps*eps                       ! length unit is pc already
 !
 ! ============================================================

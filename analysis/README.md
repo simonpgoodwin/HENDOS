@@ -10,8 +10,9 @@ functions listed here change, change this in the same edit.**
 |---|---|
 | `hendosview.py` | the viewer: 3D view, plots against time, images and movies |
 | `hendosanalysis.py` | the analyses done on snapshots - add your own here |
-| `hendosio.py` | reads snapshots and run-time analysis files |
-| `maketestdata.py` | makes a few test files to try the viewer on (not a HENDOS run) |
+| `hendosio.py` | reads snapshots and run-time analysis files; finds runs and ensembles |
+| `hendosensemble.py` | puts the results of an ensemble of runs together |
+| `maketestdata.py` | makes a few test files to try the viewer on (not a HENDOS run); with a number, a test ensemble too |
 
 Needs Python 3 with `numpy` and `matplotlib`. `scipy` is needed only for the Q
 parameter, and `ffmpeg` only for mp4 movies (without it an animated GIF is
@@ -114,6 +115,55 @@ def mean_mass(snap):
 curves on one plot. Useful tools already there: `centre_of_mass`, `radius`,
 `speed`, `lagrangian_radii`, `specific_energy`.
 
+## Ensembles
+An ensemble is a set of runs that differ only in the random number seed of
+their initial conditions (`nensemble` in `ics.nml` and `params.nml`). hermite
+gives the members the runids `<name>_e001`, `<name>_e002`, ... and the tools
+here recognise an ensemble from those names: nothing has to be listed, and
+members that are missing or still running are left out and reported.
+
+```
+python hendosensemble.py data              lists the ensembles in data/
+python hendosensemble.py data test01       collates the ensemble test01
+python hendosensemble.py data --all        collates every ensemble
+```
+Options: `--out <directory>` for the files (the data directory otherwise) and
+`--noplots` for tables only. For the ensemble `test01` it writes:
+
+| File | What |
+|---|---|
+| `test01_ens_summary.dat` | one line per member: end time, number of stars, energy error, mergers, binaries and groups, and the value of every analysis at the end |
+| `test01_ens_<analysis>.dat` | for each analysis below, against time: the number of members, their mean, the standard deviation between them, median, 16th and 84th percentiles, minimum and maximum |
+| `test01_ens_<analysis>.png` | the same as a plot: each member in grey, the median, and the band that holds the middle 68% of the members |
+| `test01_ens_mergers.dat` | the merger files of all the members in one, with the member number as the first column |
+| `test01_ens_lagrangian.dat` | the same statistics for the run-time Lagrangian radii files |
+
+The tables have the usual `# key = value` header, so `hendosio.read_analysis`
+reads them. Every analysis registered with `@quantity` is collated, your own
+included, with no change to `hendosensemble.py`. Statistics at each time use
+the members that have a snapshot at that time, and the column `n` says how
+many that was, so an ensemble can be collated while it is still running.
+
+In the viewer the members appear in the list of runs as separate runs
+(`test01_e001`, ...) and can be looked at one at a time; the viewer does not
+yet show ensemble statistics.
+
+In a script:
+```python
+from hendosio import Ensemble, find_ensembles
+import hendosanalysis as ha
+
+print(find_ensembles('data'))                 # {'test01': [1, 2, 3, ...]}
+ens = Ensemble('data', 'test01')
+print(len(ens), ens.size, ens.missing)        # found, asked for, missing
+times, members, stats = ha.ensemble_timeseries(ens, 'half-mass radius')
+stats['']['median'], stats['']['p16'], stats['']['p84']    # against time
+members['']                                   # array [member, time]
+run7 = ens.run(7)                             # one member, an ordinary Run
+```
+For an analysis with several curves (`'Lagrangian radii'`) the dictionaries
+have one entry per curve (`stats['50%']['mean']`).
+
 ## Using the pieces in a script
 ```python
 from hendosio import Run
@@ -145,6 +195,8 @@ points by colour-blind readers; that is why types have marker shapes as well.
 
 ## What has and has not been tested
 The reader, the analyses, every view, the options, saving images and saving a
-movie were run on the test files without a screen. The window has not been
+movie were run on the test files without a screen. `hendosensemble.py` was run
+on a test ensemble of five made by `maketestdata.py` (one member cut short,
+one with a merger file), not on a real ensemble. The window has not been
 used interactively (dragging to rotate, the Play timer, clicking), because
 there was no display to try it on.

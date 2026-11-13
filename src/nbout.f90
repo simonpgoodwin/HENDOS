@@ -276,6 +276,8 @@
    WRITE(6,'(a)') dline
    WRITE(6,'(a,a)')          '  initial conditions     ', TRIM(icfile)
    WRITE(6,'(a,i14)')        '  particles              ', ntot
+   IF (ensmember > 0) WRITE(6,'(a,i14,a,i0,a,a)') '  ensemble member        ', &
+&    ensmember, ' of ', nensemble, ' of ensemble ', TRIM(ensbase)
    WRITE(6,'(a,i14)')        '  OpenMP threads         ', nthreads
    WRITE(6,'(a,a)')          '  particle types         ', TRIM(typecounts())
    WRITE(6,'(a,f14.2,a)')    '  total mass             ', mt, ' Msun'
@@ -594,6 +596,12 @@
    CALL hdrs(u,'creator','HENDOS (hermite.f90)')
    CALL hdrs(u,'date',datestamp())
    CALL hdrs(u,'runid',runid)
+! a member of an ensemble says which ensemble and which member
+   IF (ensmember > 0) THEN
+     CALL hdrs(u,'ensemble',ensbase)
+     CALL hdri(u,'ensemble_member',INT(ensmember,KIND=8))
+     CALL hdri(u,'ensemble_size',INT(nensemble,KIND=8))
+   END IF
    CALL hdrs(u,'parameter_file',pfilename)
    CALL hdrs(u,'initial_conditions',icfile)
    CALL hdri(u,'n',INT(ntot,KIND=8))

@@ -128,7 +128,7 @@ class Tester:
         return fname
 
     # -- running -------------------------------------------------------
-    def run(self, runid, icfile, **changes):
+    def run(self, runid, icfile, need_snaps=True, **changes):
         """Run hermite. Parameters are given as section__name=value.
 
         Returns the Run result: .log (screen output) and .snaps (the
@@ -145,7 +145,7 @@ class Tester:
         if proc.returncode != 0:
             tail = '\n'.join(res.log.strip().split('\n')[-6:])
             raise Failed('hermite stopped with status %d:\n%s' % (proc.returncode, tail))
-        if not res.snaps:
+        if need_snaps and not res.snaps:
             raise Failed('the run wrote no snapshots')
         return res
 
@@ -450,6 +450,31 @@ def test_restart_neighbours(t):
     t.run('rst', 'ics.dat', run__tend=0.5, **ac)
     s = t.run('rst', 'ics.dat', run__tend=1.0, run__restart=True, **ac).last
     t.check('largest position difference (pc)', np.abs(s.pos - ref.pos).max(), 1e-9)
+
+
+def test_ensemble(t):
+    """An ensemble of three runs, each with its own output files."""
+    for k in (1, 2, 3):
+        m, pos, vel = plummer(32, seed=10 + k)
+        t.write_ics('ics_e%03d.dat' % k, m, pos, vel)
+    r = t.run('ens', 'ics.dat', need_snaps=False, run__tend=0.5, run__nensemble=3,
+              run__nparallel=3)
+    t.check("'3 of 3 members ran to the end'", '3 of 3 members ran to the end' in r.log,
+            True, 'equal')
+    ends = []
+    for k in (1, 2, 3):
+        member = RunResult(t.dir, 'ens_e%03d' % k)
+        member.read()
+        t.check('member %d: snapshots' % k, len(member.snaps), 3, 'equal')
+        if member.snaps:
+            s = member.last
+            t.check('member %d: ensemble_member in header' % k,
+                    int(s.value('ensemble_member')), k, 'equal')
+            t.check('member %d: energy error' % k, energy_error(s), 1e-4)
+            ends.append(s.pos[0, 0])
+        t.check('member %d: its own log file' % k,
+                os.path.exists(member.file('.log')), True, 'equal')
+    t.check('members differ from each other', len(set(ends)), 3, 'equal')
 
 
 # ----------------------------------------------------------------------

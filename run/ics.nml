@@ -35,6 +35,14 @@
   seed    = 12345          ! random number seed - any whole number. The
                            !   same seed gives the same stars again
 
+  nensemble = 1            ! [1] number of sets of initial conditions
+                           !   to make. More than 1 makes an ENSEMBLE:
+                           !   sets that differ only in the seed (seed,
+                           !   seed+1, ...), in files with the member
+                           !   number in the name: plum1k_e001.dat,
+                           !   plum1k_e002.dat, ... Give hermite the
+                           !   same nensemble to run them all
+
   distribution = 'plummer' ! 'plummer' = Plummer sphere
                            ! 'fractal' = box fractal (see &fractal)
                            ! 'user'    = your own: the routine

@@ -181,3 +181,74 @@ def timeseries(run, name, progress=None):
         if progress is not None:
             progress(i + 1, run.nsnap)
     return run.times.copy(), curves
+
+
+# ----------------------------------------------------------------------
+# Ensembles (runs that differ only in the seed of their initial conditions)
+ENSEMBLE_STATS = ('n', 'mean', 'std', 'median', 'p16', 'p84', 'min', 'max')
+
+
+def ensemble_timeseries(ensemble, name, progress=None):
+    """Run the analysis called name over every snapshot of every member of
+    an ensemble (see hendosio.Ensemble) and put the members together.
+
+    Returns (times, members, stats):
+      times     the output times (Myr) - those of the member with the most
+                snapshots; a member that stopped early, or is missing a
+                snapshot, has nan at the times it does not have
+      members   {label: array [number of members, number of times]} with
+                one row per member, in the order of ensemble.members
+      stats     {label: {statistic: array over time}} for the statistics in
+                ENSEMBLE_STATS: n (members with a value at that time), mean,
+                std (standard deviation between members), median, p16 and
+                p84 (16th and 84th percentiles: the middle 68%), min, max
+    progress, if given, is called as progress(i, number of members).
+    """
+    series = []
+    for i, run in enumerate(ensemble.runs):
+        series.append(timeseries(run, name))
+        if progress is not None:
+            progress(i + 1, len(ensemble.runs))
+    if not series:
+        return np.array([]), {}, {}
+    times = max((t for t, _ in series), key=len)
+    labels = []
+    for _, curves in series:
+        for label in curves:
+            if label not in labels:
+                labels.append(label)
+    members = {label: np.full((len(series), len(times)), np.nan) for label in labels}
+    for k, (t, curves) in enumerate(series):
+        # match each of this member's times to the common list of times
+        idx = np.searchsorted(times, t - 1e-9)
+        ok = (idx < len(times))
+        ok[ok] &= np.abs(times[idx[ok]] - t[ok]) < 1e-6
+        for label, values in curves.items():
+            members[label][k, idx[ok]] = values[ok]
+    stats = {label: ensemble_stats(values) for label, values in members.items()}
+    return times, members, stats
+
+
+def ensemble_stats(values):
+    """Statistics over the members (rows) of an array [members, times],
+    ignoring nan. Returns a dictionary of arrays over time."""
+    import warnings
+    values = np.asarray(values, float)
+    count = np.sum(np.isfinite(values), axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)     # times with no values
+        out = {
+            'n': count.astype(float),
+            'mean': np.nanmean(values, axis=0),
+            'std': np.nanstd(values, axis=0, ddof=0),
+            'median': np.nanmedian(values, axis=0),
+            'p16': np.nanpercentile(values, 16, axis=0),
+            'p84': np.nanpercentile(values, 84, axis=0),
+            'min': np.nanmin(values, axis=0),
+            'max': np.nanmax(values, axis=0),
+        }
+    # the scatter between members is the sample standard deviation
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out['std'] = np.where(count > 1, out['std'] * np.sqrt(count / np.maximum(count - 1, 1)),
+                              np.nan)
+    return out

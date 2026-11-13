@@ -4,6 +4,13 @@
 ! THE INITIAL CONDITIONS GENERATOR
 !
 ! usage:   ./makeics ics.nml
+! With nensemble > 1 in &ics it makes an ENSEMBLE: nensemble sets of
+! initial conditions that differ only in the random number seed (seed,
+! seed+1, seed+2, ...), written to files with the member number in
+! their names: outfile = 'data/plum1k.dat' gives data/plum1k_e001.dat,
+! data/plum1k_e002.dat, ... Member k is exactly what a single run with
+! seed + k - 1 would make. hermite runs the whole ensemble if it is
+! given the same nensemble (see run/PARAMS_README.md).
 ! The input is in the parameter file (default ics.nml), described in
 ! run/PARAMS_README.md. How to change this code is described below
 ! and, at more length, in src/ics/ICS_README.md.
@@ -89,6 +96,7 @@
    CHARACTER(len=256) :: outfile       ! file to write
    INTEGER :: n                        ! number of stars
    INTEGER :: seed                     ! random number seed
+   INTEGER :: nensemble                ! number of sets to make (1 = just one)
    CHARACTER(len=16) :: distribution   ! 'plummer', 'fractal' or 'user'
    DOUBLE PRECISION :: radius          ! pc: half-mass (plummer), total (fractal)
    DOUBLE PRECISION :: qvir            ! virial ratio
@@ -119,6 +127,9 @@
    DOUBLE PRECISION :: qmade           ! virial ratio of what was made
    DOUBLE PRECISION :: gcons           ! G in pc (km/s)^2 / Msun
    CHARACTER(len=256) :: pfile         ! parameter file name
+   INTEGER :: imem                     ! member of the ensemble being made
+   INTEGER :: seedmem                  ! its random number seed
+   CHARACTER(len=256) :: outname       ! its file name
 !
    gcons=4.300917270619619d-3
 !
@@ -135,8 +146,18 @@
    ALLOCATE(v(1:3,1:n))
    ALLOCATE(ptype(1:n))
 !
+! =====================================================================
+! one pass through the seven steps for each member of the ensemble
+! (just one pass if nensemble = 1). Only the seed and the file name
+! differ between members.
+! =====================================================================
+   DO imem=1,nensemble
+   seedmem=seed + imem - 1
+   outname=outfile
+   IF (nensemble > 1) outname=ensname(outfile,imem)
+!
 ! start the random numbers (ran3 needs a negative number to start)
-   idum=-ABS(seed)
+   idum=-ABS(seedmem)
    IF (idum == 0) idum=-1
 !
 ! =====================================================================
@@ -193,8 +214,41 @@
 ! =====================================================================
    CALL report
    CALL writeics
+   END DO
+!
+   IF (nensemble > 1) WRITE(6,'(a,i0,a,a,a,a)') '  ensemble of ', nensemble, &
+&    ' written: ', TRIM(ensname(outfile,1)), ' to ', TRIM(ensname(outfile,nensemble))
 !
    CONTAINS
+! =====================================================================
+   FUNCTION ensname(name,k) RESULT(str)
+!
+! the name of member k of an ensemble: _e and the member number (3
+! digits, more if needed) put before the file extension,
+!   data/plum1k.dat -> data/plum1k_e007.dat
+! hermite uses the same rule (ensname in src/nbsetup.f90) - keep the
+! two the same.
+!
+   CHARACTER(len=*), INTENT(IN) :: name
+   INTEGER, INTENT(IN) :: k
+   CHARACTER(len=256) :: str
+   CHARACTER(len=16) :: num
+   INTEGER :: idot,islash
+!
+   IF (k < 1000) THEN
+     WRITE(num,'(a,i3.3)') '_e', k
+   ELSE
+     WRITE(num,'(a,i0)') '_e', k
+   END IF
+   idot=INDEX(TRIM(name),'.',BACK=.TRUE.)
+   islash=INDEX(TRIM(name),'/',BACK=.TRUE.)
+   IF (idot > islash + 1) THEN
+     str=name(1:idot - 1)//TRIM(num)//name(idot:LEN_TRIM(name))
+   ELSE
+     str=TRIM(name)//TRIM(num)
+   END IF
+!
+   END FUNCTION ensname
 ! =====================================================================
 ! =====================================================================
    SUBROUTINE makestructure
@@ -479,7 +533,9 @@
 &                           ' (velocities not scaled: setvirial is off)'
    END IF
    WRITE(6,'(a,f12.4,a)')   '  3D velocity dispersion  ', sig, ' km/s'
-   WRITE(6,'(a,a)')         '  written to              ', TRIM(outfile)
+   IF (nensemble > 1) WRITE(6,'(a,i12,a,i0,a,i0,a)') '  ensemble member         ', &
+&    imem, ' of ', nensemble, '  (seed ', seedmem, ')'
+   WRITE(6,'(a,a)')         '  written to              ', TRIM(outname)
    WRITE(6,'(a)') ' ------------------------------------------------------------'
 !
    END SUBROUTINE report
@@ -501,8 +557,8 @@
    CALL DATE_AND_TIME(values=dv)
    WRITE(date,'(i4.4,a,i2.2,a,i2.2,a,i2.2,a,i2.2,a,i2.2)') dv(1), '-', dv(2), &
 &    '-', dv(3), ' ', dv(5), ':', dv(6), ':', dv(7)
-   OPEN(3,file=TRIM(outfile),status='replace',iostat=ios)
-   IF (ios /= 0) CALL bad('cannot write '//TRIM(outfile)//' - does the directory exist?')
+   OPEN(3,file=TRIM(outname),status='replace',iostat=ios)
+   IF (ios /= 0) CALL bad('cannot write '//TRIM(outname)//' - does the directory exist?')
    WRITE(3,'(a)') '# format                        = NBODY-SNAPSHOT 2'
    WRITE(3,'(a)') '# creator                       = HENDOS (makeics.f90)'
    WRITE(3,'(a,a)') '# date                          = ', date
@@ -527,7 +583,14 @@
    ELSE IF (TRIM(imf) == 'equal') THEN
      WRITE(3,'(a,es24.16)') '# mass_of_each_star_Msun        = ', mequal
    END IF
-   WRITE(3,'(a,i0)') '# random_seed                   = ', seed
+   WRITE(3,'(a,i0)') '# random_seed                   = ', seedmem
+! an ensemble: which member this is. The members differ only in the seed
+   IF (nensemble > 1) THEN
+     WRITE(3,'(a,a)') '# ensemble                      = ', TRIM(outfile)
+     WRITE(3,'(a,i0)') '# ensemble_member               = ', imem
+     WRITE(3,'(a,i0)') '# ensemble_size                 = ', nensemble
+     WRITE(3,'(a,i0)') '# ensemble_first_seed           = ', seed
+   END IF
    IF (setvirial .AND. .NOT. larson) &
 &    WRITE(3,'(a,es24.16)') '# virial_ratio_asked_for        = ', qvir
    WRITE(3,'(a,es24.16)') '# virial_ratio                  = ', qmade
@@ -557,7 +620,8 @@
    INTEGER :: ios
    CHARACTER(len=256) :: msg
 ! >>> NEW PARAMETER: add it to the namelist of its section
-   NAMELIST /ics/ outfile, n, seed, distribution, radius, qvir, setvirial
+   NAMELIST /ics/ outfile, n, seed, distribution, radius, qvir, setvirial, &
+&    nensemble
    NAMELIST /masses/ imf, mlo, mup, alpha, beta, mu, mequal
    NAMELIST /fractal/ fdim, ndiv, velocities, coresize, vlarson
 !
@@ -566,6 +630,7 @@
    outfile=''
    n=1000
    seed=12345
+   nensemble=1
    distribution='plummer'
    radius=1.d0
    qvir=0.5d0
@@ -605,6 +670,7 @@
    IF (LEN_TRIM(outfile) == 0) CALL bad('outfile must be set in &ics')
    IF (INDEX(TRIM(outfile),' ') > 0) CALL bad('outfile name must not contain spaces')
    IF (n < 2) CALL bad('n must be at least 2')
+   IF (nensemble < 1) CALL bad('nensemble must be at least 1')
    IF (radius <= 0.d0) CALL bad('radius must be > 0')
    IF (qvir < 0.d0) CALL bad('qvir must be >= 0')
    IF (TRIM(imf) == 'maschberger') THEN

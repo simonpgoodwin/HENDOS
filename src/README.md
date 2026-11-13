@@ -62,6 +62,12 @@ No calculations: declarations of everything shared between modules.
   - `safename(str)` (internal) - true if a name has only letters, digits, - _ .
 - `checkdatadir` - makes the data directory if needed and stops if files
   cannot be written there.
+- `ensname(name,k)` - function: the name of member `k` of an ensemble (`_e007`
+  put before the extension, or at the end if there is none).
+- `setmember(k)` - makes this run member `k` of the ensemble: its runid and
+  initial conditions file get the member number.
+- `runensemble` - runs every member of an ensemble, `nparallel` at a time, each
+  as a separate run of `hermite` with its screen output in its own log file.
 - `allocarrays` - allocates all the particle and binary arrays.
 - `readic` - reads the initial conditions (NBODY-SNAPSHOT 2 with types,
   version 1 without, or legacy `m x y z vx vy vz`), sets ids and types,
@@ -254,7 +260,8 @@ How to add a new analysis is described at the top of the file.
 
 ## hermite.f90 - main program
 No subroutines. In order: read the parameter file name, `setunits`,
-`readparams`, `checkdatadir`; then either `readic`, set up the block clock,
+`readparams`, `checkdatadir`; for an ensemble either `runensemble` (and stop)
+or, with a member number on the command line, `setmember`; then either `readic`, set up the block clock,
 `firststep`, `collcheck`, `binstart`, `startinfo`, first snapshot and analysis,
 or (with `restart`) `readrestart`. Then the loop over output intervals; inside
 it the loop over blocks:
@@ -292,6 +299,9 @@ fractal, or neither if `setvirial` is off), `userfinal`, then `report` and
 - `makemasses` - step 2. Gives the stars their masses (`maschberger`, all
   equal, or `usermasses`) and their types. A new mass function is a new
   `CASE` here.
+- `ensname(name,k)` - function: the file name of member `k` of an ensemble (the
+  same rule as `ensname` in `nbsetup.f90`). The seven steps are inside a loop
+  over the members; only the seed and the file name change.
 - `tocom` - step 4. Moves to the centre of mass and centre of velocity.
 - `virialise` - step 5. Scales all velocities by one factor to give exactly
   the virial ratio asked for.

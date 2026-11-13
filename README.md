@@ -43,7 +43,8 @@ HENDOS/
     README.md            how to use them
     hendosview.py        the viewer: 3D view, plots, images, movies
     hendosanalysis.py    analyses of snapshots - add your own
-    hendosio.py          reads snapshots and run-time analysis files
+    hendosio.py          reads snapshots and run-time analysis files; finds ensembles
+    hendosensemble.py    puts the results of an ensemble together
     maketestdata.py      test files for trying the viewer
   benchmark/             comparing with other codes (Python)
     README.md            how to run the comparison and read it
@@ -71,6 +72,24 @@ changed per run are at the top (`&run`, `&output`, `&analysis`, `&tides`,
 `&tree`), standard settings below (`&binaries`, `&collisions`, `&integrator`,
 `&computing`). Any parameter or section left out takes its standard value.
 Keep one parameter file per run in `run/` (e.g. `params_run01.nml`).
+
+## Ensembles
+An ensemble is a set of runs that differ only in the random number seed of
+their initial conditions. The same parameter, `nensemble`, is given to both
+programs:
+```
+./makeics ics.nml          nensemble = 20 in &ics: writes data/plum1k_e001.dat ... _e020.dat
+./hermite params.nml       nensemble = 20 in &run: runs them all, nparallel at a time
+python ../analysis/hendosensemble.py data test01      puts the results together
+```
+Each member is a separate run with its own files: its runid is the `runid` of
+the parameter file with `_e001`, `_e002`, ... added, its screen output goes to
+`<datadir>/<runid>_e001.log`, and the headers of its files say which ensemble
+and which member it is. `./hermite params.nml 7` runs member 7 alone.
+`hendosensemble.py` finds the members from their file names and writes, for
+every analysis, the mean, scatter, median and percentiles over the members
+against time, a plot of each, a one-line-per-member summary, and all the
+mergers in one file. See `run/PARAMS_README.md` and `analysis/README.md`.
 
 ## Looking at a run
 `python ../analysis/hendosview.py data` (from `run/`) opens the viewer on the
@@ -155,6 +174,9 @@ difference between stars rose with separation to the power 0.50 for `larson`,
 - `<datadir>/<runid>_mergers.dat` one line per stellar merger (made at the
   first merger)
 - `<datadir>/<runid>_restart.bin` restart file, binary (if `trestart` > 0)
+- For member 7 of an ensemble `<runid>` is the runid of the parameter file
+  with `_e007` added, and `<datadir>/<runid>_e007.log` is its screen output.
+  `hendosensemble.py` writes `<datadir>/<runid>_ens_<what>.dat` and `.png`.
 - A new run (start time 0) refuses to start if files for its runid exist in
   the data directory.
 - The `creator` header line of every file is `HENDOS (<source file>)`.

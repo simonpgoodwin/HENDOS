@@ -57,7 +57,7 @@
    LOGICAL :: bad
    DOUBLE PRECISION :: fconv,pi
    CHARACTER(len=256) :: msg
-   NAMELIST /run/ runid, icfile, tend, tout, eps, restart
+   NAMELIST /run/ runid, icfile, tend, tout, eps, restart, nensemble, nparallel
    NAMELIST /output/ datadir, screen, tsnap, dewarn, trestart
    NAMELIST /analysis/ tana, lagrangian
    NAMELIST /tides/ tidal, oorta, oortb, rho0, tij, omegat
@@ -99,6 +99,8 @@
    mergers=.TRUE.
    restart=.FALSE.
    trestart=0.d0
+   nensemble=1
+   nparallel=1
    useac=.FALSE.
    nnbopt=0
    nnbmax=0
@@ -319,6 +321,16 @@
        bad=.TRUE.
      END IF
    END IF
+   IF (nensemble < 1 .OR. nparallel < 1 .OR. nparallel > 64) THEN
+     WRITE(6,'(a)') ' ERROR: nensemble must be at least 1 and nparallel '// &
+&      'between 1 and 64'
+     bad=.TRUE.
+   END IF
+   IF (nensemble > 1 .AND. LEN_TRIM(runid) > 26) THEN
+     WRITE(6,'(a)') ' ERROR: runid must be 26 characters or fewer for an '// &
+&      'ensemble (the member number is added to it)'
+     bad=.TRUE.
+   END IF
    IF (trestart < 0.d0) THEN
      WRITE(6,'(a)') ' ERROR: trestart must be >= 0 (0 = no restart files)'
      bad=.TRUE.
@@ -411,6 +423,169 @@
    CLOSE(9,status='delete')
 !
    END SUBROUTINE checkdatadir
+! =====================================================================
+   FUNCTION ensname(name,k) RESULT(str)
+!
+! the name of member k of an ensemble: _e and the member number (3
+! digits, more if needed) put before the file extension if there is
+! one, otherwise at the end:
+!   data/plum1k.dat -> data/plum1k_e007.dat      test01 -> test01_e007
+! makeics names its files by the same rule (ensname in
+! src/ics/makeics.f90) - keep the two the same.
+!
+   CHARACTER(len=*), INTENT(IN) :: name
+   INTEGER, INTENT(IN) :: k
+   CHARACTER(len=256) :: str
+   CHARACTER(len=16) :: num
+   INTEGER :: idot,islash
+!
+   IF (k < 1000) THEN
+     WRITE(num,'(a,i3.3)') '_e', k
+   ELSE
+     WRITE(num,'(a,i0)') '_e', k
+   END IF
+   idot=INDEX(TRIM(name),'.',BACK=.TRUE.)
+   islash=INDEX(TRIM(name),'/',BACK=.TRUE.)
+   IF (idot > islash + 1) THEN
+     str=name(1:idot - 1)//TRIM(num)//name(idot:LEN_TRIM(name))
+   ELSE
+     str=TRIM(name)//TRIM(num)
+   END IF
+!
+   END FUNCTION ensname
+! =====================================================================
+   SUBROUTINE setmember(k)
+!
+! this run is member k of an ensemble: its runid and its initial
+! conditions file get the member number, so every file it writes has
+! it too (snapshots, analysis, mergers, restart)
+!
+   INTEGER, INTENT(IN) :: k
+!
+   IF (k < 1 .OR. k > nensemble) THEN
+     WRITE(6,'(a,i0,a,i0)') ' ERROR: ensemble member ', k, &
+&      ' asked for, but nensemble in the parameter file is ', nensemble
+     STOP 1
+   END IF
+   ensmember=k
+   ensbase=runid
+   ensicfile=icfile
+   runid=ensname(TRIM(ensbase),k)
+   icfile=ensname(TRIM(ensicfile),k)
+!
+   END SUBROUTINE setmember
+! =====================================================================
+   SUBROUTINE runensemble
+!
+! run every member of the ensemble (nensemble > 1 in the parameter file
+! and no member number on the command line).
+!
+! Each member is a separate run of this same program, started here as
+!     hermite <parameter file> <member number>
+! so the members cannot interfere with each other and nothing in the
+! code has to be reset between them. Member k reads the initial
+! conditions ensname(icfile,k) (as written by makeics with the same
+! nensemble) and has the runid ensname(runid,k), so its files are
+!     <runid>_e00k_snap_..., <runid>_e00k_ana_..., <runid>_e00k_mergers.dat
+! and its screen output goes to <datadir>/<runid>_e00k.log.
+! nparallel members are run at the same time; each uses OMP_NUM_THREADS
+! threads, so nparallel x OMP_NUM_THREADS should not be more than the
+! number of cores. For small N, many members with one thread each is
+! by far the best use of a machine.
+! A member can also be run on its own in the same way by hand (or as
+! one job of a job array on a cluster):   ./hermite params.nml 7
+!
+   INTEGER :: k,k1,k2,ist,ios,nfail,nmiss,l
+   INTEGER(KIND=8) :: c0,c1,crate
+   CHARACTER(len=256) :: exe,logf,statf
+   CHARACTER(len=16) :: num
+   CHARACTER(len=32768) :: cmd
+   CHARACTER(len=2) :: redir
+   LOGICAL :: ex
+!
+   CALL GET_COMMAND_ARGUMENT(0,exe)
+   redir='> '
+   IF (restart) redir='>>'
+!
+   WRITE(6,'(a)') ' =============================================================================='
+   WRITE(6,'(a,a)') '  HENDOS - HErmite N-body Dynamics Of Systems     ensemble: ', TRIM(runid)
+   WRITE(6,'(a)') ' =============================================================================='
+   WRITE(6,'(a,i14)')  '  members                ', nensemble
+   WRITE(6,'(a,i14)')  '  run at the same time   ', nparallel
+   WRITE(6,'(a,i14)')  '  threads for each       ', nthreads
+   WRITE(6,'(a,a,a,a)') '  initial conditions     ', TRIM(ensname(TRIM(icfile),1)), &
+&    ' to ', TRIM(ensname(TRIM(icfile),nensemble))
+   WRITE(6,'(a,a,a)')  '  screen output of each  ', TRIM(datadir), '<runid>_e<member>.log'
+   IF (restart) WRITE(6,'(a)') '  every member is restarted from its restart file'
+!
+! all the initial conditions must be there before anything is started
+   nmiss=0
+   IF (.NOT. restart) THEN
+     DO k=1,nensemble
+       INQUIRE(file=TRIM(ensname(TRIM(icfile),k)),exist=ex)
+       IF (.NOT. ex) THEN
+         nmiss=nmiss + 1
+         IF (nmiss <= 5) WRITE(6,'(a,a)') ' ERROR: cannot find ', &
+&          TRIM(ensname(TRIM(icfile),k))
+       END IF
+     END DO
+   END IF
+   IF (nmiss > 0) THEN
+     WRITE(6,'(a,i0,a)') ' ERROR: ', nmiss, ' of the initial conditions files '// &
+&      'are missing. Make them with makeics and the same nensemble.'
+     STOP 1
+   END IF
+   WRITE(6,'(a)') ' ------------------------------------------------------------------------------'
+!
+   nfail=0
+   DO k1=1,nensemble,nparallel
+     k2=MIN(nensemble,k1 + nparallel - 1)
+! one shell command that starts members k1 to k2 together and waits for
+! them all; each writes its exit status to a small file when it ends
+     cmd=''
+     l=0
+     DO k=k1,k2
+       WRITE(num,'(i0)') k
+       logf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.log'
+       statf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.status'
+       cmd(l + 1:)='( '//TRIM(exe)//' '//TRIM(pfilename)//' '//TRIM(num)//' '// &
+&        redir//' '//TRIM(logf)//' 2>&1 ; echo $? > '//TRIM(statf)//' ) & '
+       l=LEN_TRIM(cmd) + 1
+     END DO
+     cmd(l + 1:)='wait'
+     CALL SYSTEM_CLOCK(c0,crate)
+     CALL EXECUTE_COMMAND_LINE(TRIM(cmd))
+     CALL SYSTEM_CLOCK(c1)
+     DO k=k1,k2
+       statf=TRIM(datadir)//TRIM(ensname(TRIM(runid),k))//'.status'
+       ist=-1
+       OPEN(9,file=TRIM(statf),status='old',iostat=ios)
+       IF (ios == 0) THEN
+         READ(9,*,iostat=ios) ist
+         CLOSE(9,status='delete')
+       END IF
+       IF (ist == 0) THEN
+         WRITE(6,'(a,i6,a,a)') '  member ', k, '   finished   ', &
+&          TRIM(ensname(TRIM(runid),k))
+       ELSE
+         nfail=nfail + 1
+         WRITE(6,'(a,i6,a,a,a)') '  member ', k, '   STOPPED EARLY - see ', &
+&          TRIM(datadir)//TRIM(ensname(TRIM(runid),k)), '.log'
+       END IF
+     END DO
+     WRITE(6,'(a,i0,a,i0,a,f0.1,a)') '    (members ', k1, ' to ', k2, ' took ', &
+&      DBLE(c1 - c0)/DBLE(crate), ' s)'
+     FLUSH(6)
+   END DO
+!
+   WRITE(6,'(a)') ' =============================================================================='
+   WRITE(6,'(a,i0,a,i0,a)') '  ensemble finished: ', nensemble - nfail, ' of ', &
+&    nensemble, ' members ran to the end'
+   IF (nfail > 0) WRITE(6,'(a,i0,a)') '  ** ', nfail, ' stopped early: look at their log files'
+   WRITE(6,'(a)') ' =============================================================================='
+   IF (nfail > 0) STOP 1
+!
+   END SUBROUTINE runensemble
 ! =====================================================================
    SUBROUTINE allocarrays
 !

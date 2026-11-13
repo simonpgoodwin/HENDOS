@@ -80,6 +80,9 @@
       REAL, SAVE :: spare
       LOGICAL, SAVE :: have=.FALSE.
 !
+!  HENDOS: a negative idum restarts ran3, so forget the spare number
+!  too - the stars then depend on the seed alone (needed for ensembles)
+      IF (idum < 0) have = .FALSE.
       IF (have) THEN
           gasdev = spare
           have = .FALSE.

@@ -77,6 +77,54 @@ collisional calculation wants. If `eps` is greater than 0 the binary treatment
 
 ---
 
+### `nensemble` (whole number, standard value 1)
+The number of runs to do. With more than 1 the code runs an **ensemble**: a
+set of simulations that are the same in every way except the random number
+seed of their initial conditions. Make the initial conditions first with
+`makeics` and the same `nensemble` in `ics.nml`; that writes one file per
+member, with `_e001`, `_e002`, ... put before the extension of `outfile`.
+Then `./hermite params.nml`, with `icfile` set to the name *without* a member
+number, runs them all:
+
+| | set in the files | member 1 | member 2 |
+|---|---|---|---|
+| initial conditions | `data/plum1k.dat` | `data/plum1k_e001.dat` | `data/plum1k_e002.dat` |
+| runid | `test01` | `test01_e001` | `test01_e002` |
+| snapshots | | `test01_e001_snap_...Myr.dat` | `test01_e002_snap_...Myr.dat` |
+| screen output | | `data/test01_e001.log` | `data/test01_e002.log` |
+
+Every output file of a member carries its member number, because the number
+is part of its runid: snapshots, analysis files, the merger file and the
+restart file. The headers of its files also say which ensemble it belongs to
+(`ensemble`, `ensemble_member`, `ensemble_size`). While the ensemble runs the
+screen shows one line as each member finishes; what each member would have
+written to the screen is in its `.log` file. `runid` must be 26 characters or
+fewer.
+
+Each member is a separate run of `hermite`, so one member stopping early (a
+collision with `mergers` off, say) does not stop the others; the summary at
+the end says how many finished. A single member can be run, or run again, on
+its own by giving its number after the parameter file, which is also the way
+to run an ensemble as a job array on a cluster:
+```
+./hermite params.nml 7
+```
+With `restart = .true.` every member is carried on from its own restart file.
+To put the results of an ensemble together afterwards use
+`analysis/hendosensemble.py`.
+
+### `nparallel` (whole number, standard value 1)
+How many members of an ensemble are run at the same time. Each of them uses
+`OMP_NUM_THREADS` cores, so `nparallel` times `OMP_NUM_THREADS` should not be
+more than the number of cores of the machine. For ensembles of small systems
+the fastest way by far is one thread each and as many members at once as
+there are cores:
+```
+export OMP_NUM_THREADS=1        (and nparallel = 16 on a 16-core machine)
+```
+because the members do not have to talk to each other at all, whereas the
+threads of a single small run spend most of their time waiting for each other.
+
 ### `restart` (switch, standard value `.false.`)
 `.true.` carries the run on from its restart file, `<runid>_restart.bin` in
 the data directory, instead of starting again from `icfile`. Use the same
@@ -435,6 +483,23 @@ directory must already exist. This is the name to give as `icfile` in
 ### `n` (whole number, standard value 1000)
 The number of stars. The total mass is not an input: it is whatever `n` stars
 drawn from the mass function add up to, and is printed at the end.
+
+### `nensemble` (whole number, standard value 1)
+The number of sets of initial conditions to make. With more than 1 `makeics`
+makes an **ensemble**: sets that are the same in every way except the random
+number seed, which is `seed` for the first, `seed` + 1 for the second, and so
+on. Each is written to its own file, with the member number put before the
+extension of `outfile`: `outfile = 'data/plum1k.dat'` with `nensemble = 3`
+writes `data/plum1k_e001.dat`, `data/plum1k_e002.dat` and
+`data/plum1k_e003.dat`. Member k is exactly what a single run of `makeics`
+with seed `seed` + k - 1 would make, so one member can be remade on its own.
+The header of each file records the ensemble, the member number and the seed
+used. To run them all, give `hermite` the same `nensemble` (in `&run` of
+`params.nml`) and the `outfile` name as its `icfile`.
+
+Remember that members differ in everything the random numbers decide: the
+positions and velocities, and also the masses, so the total mass differs a
+little from member to member.
 
 ### `seed` (whole number, standard value 12345)
 The random number seed. The same seed, with the same other parameters, gives
