@@ -443,7 +443,7 @@ def test_restart(t):
 
 def test_restart_neighbours(t):
     """The same with the neighbour scheme (lists are in the restart file)."""
-    m, pos, vel = plummer(128, seed=5)
+    m, pos, vel = plummer(192, seed=5)
     t.write_ics('ics.dat', m, pos, vel)
     ac = dict(neighbours__useac=True, output__trestart=0.5)
     ref = t.run('ref', 'ics.dat', run__tend=1.0, **ac).last

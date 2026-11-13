@@ -246,7 +246,7 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   (irregular) force is summed every step and the rest (regular force) only on
   longer regular steps, being extrapolated linearly in between and corrected by
   a Hermite corrector over the regular step. Not used with the tree, and
-  switched off (with a note on the screen) for fewer than 100 stars.
+  switched off (with a note on the screen) for fewer than 150 stars.
 - **Restart files** (`trestart`, `restart`): the complete state in binary,
   written at output times, from which a run carries on exactly. The file is a
   list of named sections that a reader can skip, so new physics can add its own.

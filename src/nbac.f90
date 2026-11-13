@@ -67,15 +67,30 @@
 !
 ! the neighbour scheme is switched off, and the user told, if there are
 ! fewer than nacmin stars: a neighbour list is then a large part of the
-! whole system, so the scheme costs as much as plain direct summation
-! and is less accurate (in a Python model at N = 30 it was no faster
-! and about 7 times less accurate). Called once the number of stars is
-! known, before acalloc.
+! whole system, so the scheme costs as much as plain direct summation.
+! Called once the number of stars is known, before acalloc.
 !
-! >>> CHANGE HERE (nacmin) to test the scheme on fewer stars
+! Where nacmin = 150 comes from. A Python model of this code was run on
+! equal-mass Plummer spheres of 30 to 800 stars with and without the
+! scheme, with etar = 0.005 so that the energy errors were the same,
+! and the pair interactions counted. Cost of the scheme / cost of
+! direct summation, if a pair in a neighbour sum costs w times a pair
+! in a full sum (neighbour sums jump about in memory and do not
+! vectorise, so w is more than 1; 2 to 3 is a guess):
+!        N      30    60   100   150   200   300   400   800
+!      w = 1   1.36  0.98  0.87  0.80  0.72  0.65  0.60  0.49
+!      w = 2   1.95  1.26  1.04  0.91  0.81  0.73  0.67  0.55
+!      w = 3   2.54  1.55  1.21  1.01  0.89  0.80  0.74  0.60
+! so the scheme breaks even at about 60 stars if w = 1, 110 if w = 2
+! and 150 if w = 3. w has not been measured (the code had not been
+! compiled when this was written).
+!
+! >>> CHANGE HERE (nacmin) once the break-even has been measured with
+!     the compiled code: benchmark/bench_kira.py --skip-kira --modes
+!     direct neighbours at several N, compared at equal energy error
 !
    INTEGER, INTENT(IN) :: nstars
-   INTEGER, PARAMETER :: nacmin=100
+   INTEGER, PARAMETER :: nacmin=150
 !
    IF (.NOT. useac .OR. nstars >= nacmin) RETURN
    useac=.FALSE.

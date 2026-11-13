@@ -201,12 +201,16 @@ using above a thousand stars or so. The saving grows with N.
 ### `useac` (switch, standard value `.false.`)
 `.true.` uses the neighbour scheme. It is switched off, with a warning, if
 `usetree` is on.
-With fewer than 100 stars the code switches the neighbour scheme off, says so
+With fewer than 150 stars the code switches the neighbour scheme off, says so
 on the screen at the start, and carries on with plain direct summation: for so
-few stars a neighbour list is a large part of the whole system, so the scheme
-saves nothing and is less accurate (in a test at N = 30 it cost the same and
-the energy error was about 7 times larger). To test the scheme on fewer stars,
-change `nacmin` in `accheck` in `src/nbac.f90`.
+few stars a neighbour list is a large part of the whole system and the scheme
+saves nothing. The value 150 is an estimate of the break-even from a model of
+the code, compared at equal energy error: counting pair interactions the
+scheme costs 1.36 times direct summation at 30 stars, 0.98 at 60, 0.87 at 100,
+0.72 at 200, 0.60 at 400 and 0.49 at 800, and a neighbour sum costs more per
+pair than a full sum, which moves the break-even from 60 up to somewhere
+between 110 and 150. It should be measured with the compiled code and changed
+if need be: it is `nacmin` in `accheck` in `src/nbac.f90`.
 
 ### `nnbopt` (whole number, standard value 0)
 The number of neighbours wanted for each star. 0 sets it automatically to

@@ -94,7 +94,7 @@ No calculations: declarations of everything shared between modules.
 ## nbac.f90 - Ahmad-Cohen neighbour scheme (only used when `useac` is on)
 The scheme is explained at the top of the file.
 - `accheck(nstars)` - switches the scheme off, and says so, if there are
-  fewer than 100 stars.
+  fewer than 150 stars.
 - `acalloc` - chooses the list sizes if they were left automatic and
   allocates the arrays.
 - `acsetrs0` - first guess of the neighbour-sphere radius.
