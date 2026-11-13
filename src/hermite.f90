@@ -95,6 +95,8 @@
      CALL readrestart(time,iout0,nblock,nforce)
    ELSE
      CALL readic
+! (the neighbour scheme is switched off if there are too few stars)
+     CALL accheck(ntot)
      IF (useac) CALL acalloc
    END IF
 !

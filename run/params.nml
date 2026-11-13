@@ -157,8 +157,8 @@
 
   useac  = .false.         ! [.false.] .true. = use the neighbour scheme
                            !   (it is switched off if usetree is on)
-                           !   Not worth it below 100 stars: the
-                           !   code warns if it is on for fewer
+                           !   and, with a note on the screen, if
+                           !   there are fewer than 100 stars
 
   nnbopt = 0               ! [0]  number of neighbours wanted per star,
                            !   0 = automatic, (N/8)^(3/4)

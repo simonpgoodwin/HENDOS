@@ -190,6 +190,9 @@
 &          'version of HENDOS'
          STOP 1
        END IF
+! (the neighbour scheme is switched off if the run began with too few
+! stars, as it was when the file was written)
+       CALL accheck(nalloc)
        IF ((nnbm > 0) .NEQV. useac) THEN
          WRITE(6,'(a)') ' ERROR: useac must be the same as when the restart '// &
 &          'file was written'

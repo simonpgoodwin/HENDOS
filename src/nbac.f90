@@ -63,23 +63,37 @@
 !
    CONTAINS
 ! =====================================================================
+   SUBROUTINE accheck(nstars)
+!
+! the neighbour scheme is switched off, and the user told, if there are
+! fewer than nacmin stars: a neighbour list is then a large part of the
+! whole system, so the scheme costs as much as plain direct summation
+! and is less accurate (in a Python model at N = 30 it was no faster
+! and about 7 times less accurate). Called once the number of stars is
+! known, before acalloc.
+!
+! >>> CHANGE HERE (nacmin) to test the scheme on fewer stars
+!
+   INTEGER, INTENT(IN) :: nstars
+   INTEGER, PARAMETER :: nacmin=100
+!
+   IF (.NOT. useac .OR. nstars >= nacmin) RETURN
+   useac=.FALSE.
+   WRITE(6,'(a)') ''
+   WRITE(6,'(a,i0,a,i0,a)') ' NOTE: the neighbour scheme (useac) has been '// &
+&    'SWITCHED OFF: there are only ', nstars, ' stars (fewer than ', nacmin, ').'
+   WRITE(6,'(a)') '       For so few stars it is no faster than plain direct '// &
+&    'summation and is less'
+   WRITE(6,'(a)') '       accurate. The run carries on with plain direct '// &
+&    'summation.'
+   WRITE(6,'(a)') ''
+!
+   END SUBROUTINE accheck
+! =====================================================================
    SUBROUTINE acalloc
 !
-! choose the list sizes if they were left automatic, and allocate.
-! Warns if there are fewer than 100 stars: the scheme then costs as
-! much as plain direct summation and is less accurate (in a Python
-! model at N = 30 it was no faster and about 7 times less accurate).
+! choose the list sizes if they were left automatic, and allocate
 !
-   IF (nalloc < 100) THEN
-     WRITE(6,'(a)') ''
-     WRITE(6,'(a,i0,a)') ' WARNING: the neighbour scheme (useac) is on for only ', &
-&      nalloc, ' stars.'
-     WRITE(6,'(a)') '          Below about 100 stars it is no faster than plain '// &
-&      'direct summation'
-     WRITE(6,'(a)') '          and is less accurate: set useac = .false. unless '// &
-&      'you are testing it.'
-     WRITE(6,'(a)') ''
-   END IF
    IF (nnbopt == 0) nnbopt=MAX(10,NINT((DBLE(nalloc)/8.d0)**0.75d0))
    nnbopt=MIN(nnbopt,nalloc - 1)
    IF (nnbmax == 0) nnbmax=3*nnbopt + kfmax + 10
