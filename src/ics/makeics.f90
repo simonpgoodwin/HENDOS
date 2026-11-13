@@ -130,6 +130,9 @@
    INTEGER :: imem                     ! member of the ensemble being made
    INTEGER :: seedmem                  ! its random number seed
    CHARACTER(len=256) :: outname       ! its file name
+   INTEGER :: izero                    ! 0, to restart gasdev (see below)
+   REAL :: gdum
+   REAL, EXTERNAL :: gasdev
 !
    gcons=4.300917270619619d-3
 !
@@ -159,6 +162,10 @@
 ! start the random numbers (ran3 needs a negative number to start)
    idum=-ABS(seedmem)
    IF (idum == 0) idum=-1
+! (and gasdev must forget the number it kept from the member before,
+! so that member k is exactly what a single run with its seed makes)
+   izero=0
+   gdum=gasdev(izero)
 !
 ! =====================================================================
 ! STEP 1 - STRUCTURE

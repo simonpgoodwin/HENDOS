@@ -5,6 +5,8 @@
 !   ran3(idum)    uniform deviate between 0 and 1 (never exactly 1)
 !   gasdev(idum)  Gaussian deviate, zero mean and unit variance,
 !                 made from ran3
+!                 (called with idum = 0 it only forgets the number
+!                 it has in hand, for a fresh start)
 !
 ! Every generator in HENDOS takes its random numbers from ran3, so one
 ! seed always gives the same initial conditions on any machine.
@@ -80,8 +82,16 @@
       REAL, SAVE :: spare
       LOGICAL, SAVE :: have=.FALSE.
 !
-!  HENDOS: a negative idum restarts ran3, so forget the spare number
-!  too - the stars then depend on the seed alone (needed for ensembles)
+!  HENDOS: when the sequence is restarted the spare number must be
+!  forgotten too, so that the stars depend on the seed alone (needed
+!  for ensembles). A negative idum restarts ran3, so forget it then;
+!  and a call with idum = 0 (which ran3 never uses) does nothing but
+!  forget it - makeics makes that call at the start of every member.
+      IF (idum == 0) THEN
+          have = .FALSE.
+          gasdev = 0.
+          RETURN
+      END IF
       IF (idum < 0) have = .FALSE.
       IF (have) THEN
           gasdev = spare
