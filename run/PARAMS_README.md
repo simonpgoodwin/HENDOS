@@ -201,6 +201,10 @@ using above a thousand stars or so. The saving grows with N.
 ### `useac` (switch, standard value `.false.`)
 `.true.` uses the neighbour scheme. It is switched off, with a warning, if
 `usetree` is on.
+With fewer than 100 stars the code prints a warning at the start and carries
+on: for so few stars a neighbour list is a large part of the whole system, so
+the scheme saves nothing and is less accurate (in a test at N = 30 it cost the
+same and the energy error was about 7 times larger).
 
 ### `nnbopt` (whole number, standard value 0)
 The number of neighbours wanted for each star. 0 sets it automatically to

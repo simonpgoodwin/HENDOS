@@ -65,8 +65,21 @@
 ! =====================================================================
    SUBROUTINE acalloc
 !
-! choose the list sizes if they were left automatic, and allocate
+! choose the list sizes if they were left automatic, and allocate.
+! Warns if there are fewer than 100 stars: the scheme then costs as
+! much as plain direct summation and is less accurate (in a Python
+! model at N = 30 it was no faster and about 7 times less accurate).
 !
+   IF (nalloc < 100) THEN
+     WRITE(6,'(a)') ''
+     WRITE(6,'(a,i0,a)') ' WARNING: the neighbour scheme (useac) is on for only ', &
+&      nalloc, ' stars.'
+     WRITE(6,'(a)') '          Below about 100 stars it is no faster than plain '// &
+&      'direct summation'
+     WRITE(6,'(a)') '          and is less accurate: set useac = .false. unless '// &
+&      'you are testing it.'
+     WRITE(6,'(a)') ''
+   END IF
    IF (nnbopt == 0) nnbopt=MAX(10,NINT((DBLE(nalloc)/8.d0)**0.75d0))
    nnbopt=MIN(nnbopt,nalloc - 1)
    IF (nnbmax == 0) nnbmax=3*nnbopt + kfmax + 10
