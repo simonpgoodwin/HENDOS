@@ -21,8 +21,12 @@
    DOUBLE PRECISION :: sig3d                ! 3D velocity dispersion (internal)
 ! counters at the previous output, for per-interval numbers
    INTEGER(KIND=8) :: nblock0,nforce0,nclamp0,nclosed0,nopened0
+   INTEGER(KIND=8) :: nmerged0=0,nfewformed0=0,nfewopened0=0
+   INTEGER(KIND=8) :: nregular0=0,nirregular0=0
+   INTEGER(KIND=8) :: nmergedsnap=0         ! mergers at the last snapshot
    DOUBLE PRECISION :: wlast
    INTEGER(KIND=8) :: clock0,crate
+   INTEGER :: ioutstart=0                   ! output number this run started from
    CHARACTER(len=78), PARAMETER :: dline=REPEAT('=',78)
    CHARACTER(len=78), PARAMETER :: sline=REPEAT('-',78)
 !
@@ -64,7 +68,7 @@
 !
    CHARACTER(len=256) :: str
    CHARACTER(len=16) :: num
-   INTEGER :: cnt(1:ntypes),i,k
+   INTEGER :: cnt(1:ntypes),i,k,l
 !
    cnt=0
    DO i=1,n
@@ -72,8 +76,9 @@
      IF (k == 0) THEN
        cnt(itype(i))=cnt(itype(i)) + 1
      ELSE
-       cnt(btype(1,k))=cnt(btype(1,k)) + 1
-       cnt(btype(2,k))=cnt(btype(2,k)) + 1
+       DO l=1,bnum(k)
+         cnt(btype(l,k))=cnt(btype(l,k)) + 1
+       END DO
      END IF
    END DO
    str=''
@@ -143,22 +148,28 @@
 ! dispersion and 10/50/90% Lagrangian radii about the centre of mass
 !
    DOUBLE PRECISION, INTENT(IN) :: time
-   INTEGER :: i,k
-   DOUBLE PRECISION :: mt,frac(1:3),mb,rr(1:3),vr(1:3)
+   INTEGER :: i,k,l,l2,nm
+   DOUBLE PRECISION :: mt,frac(1:3),xm(1:3,1:kfmax),um(1:3,1:kfmax)
 !
    frac=(/0.1d0, 0.5d0, 0.9d0/)
    CALL energy(ekin,epot,etid)
-! add the internal energy of binaries treated as one body, at the
-! current phase of their orbits
+! add the internal energy of the groups treated as one body (binaries,
+! few-body groups, triples) at the current phase of their motion:
+! kinetic energy relative to the c.o.m. and mutual potential energy
    DO i=1,n
      k=ib(i)
      IF (k == 0) CYCLE
-     mb=bmass(1,k) + bmass(2,k)
-     CALL kepler(mb,brel(1:3,k),brel(4:6,k),time/tunit - bepoch(k),rr,vr)
-     ekin=ekin + 0.5d0*bmass(1,k)*bmass(2,k)/mb*SUM(vr*vr)
-     epot=epot - bmass(1,k)*bmass(2,k)/SQRT(SUM(rr*rr))
+     CALL grpcomp(k,r(1:3,i),v(1:3,i),time/tunit,nm,xm,um)
+     DO l=1,nm
+       ekin=ekin + 0.5d0*bmass(l,k)*SUM((um(1:3,l) - v(1:3,i))**2)
+       DO l2=l + 1,nm
+         epot=epot - bmass(l,k)*bmass(l2,k)/SQRT(SUM((xm(1:3,l) - xm(1:3,l2))**2))
+       END DO
+     END DO
    END DO
-   etot=ekin + epot + etid
+! emerged is the orbital energy removed by mergers so far: with it the
+! total is still conserved
+   etot=ekin + epot + etid + emerged
 !
    mt=SUM(m(1:n))
    cm=0.d0
@@ -296,7 +307,12 @@
      WRITE(6,'(a,f14.2,a)')  '  forces                 ', theta, &
 &                            '  (tree opening angle; energies direct)'
    ELSE
-     WRITE(6,'(a)')          '  forces                        direct'
+     IF (useac) THEN
+       WRITE(6,'(a,i14,a)')  '  forces                 ', nnbopt, &
+&                            '  (direct, neighbour scheme: neighbours wanted)'
+     ELSE
+       WRITE(6,'(a)')        '  forces                        direct'
+     END IF
    END IF
    WRITE(6,'(a,a14)')        '  screen output          ', TRIM(screen)
 !
@@ -318,6 +334,19 @@
      WRITE(6,'(a,es14.4)')   '    dewarn     ', dewarn
      WRITE(6,'(a,l14)')      '    closebinaries', closebinaries
      WRITE(6,'(a,f14.4,a)')  '    rcoll      ', rcoll, ' Rsun (0 = no check)'
+     WRITE(6,'(a,l14)')      '    mergers    ', mergers
+     WRITE(6,'(a,l14)')      '    fewbody    ', fewbody
+     IF (fewbody) THEN
+       WRITE(6,'(a,es14.4)') '    gfew       ', gfew
+       WRITE(6,'(a,f14.4)')  '    etafew     ', etafew
+     END IF
+     WRITE(6,'(a,l14)')      '    useac      ', useac
+     IF (useac) THEN
+       WRITE(6,'(a,i14)')    '    nnbopt     ', nnbopt
+       WRITE(6,'(a,i14)')    '    nnbmax     ', nnbmax
+       WRITE(6,'(a,f14.4)')  '    etar       ', etar
+     END IF
+     WRITE(6,'(a,f14.4,a)')  '    trestart   ', trestart, ' Myr (0 = no restart files)'
      WRITE(6,'(a,l14)')      '    usetree    ', usetree
      IF (usetree) THEN
        WRITE(6,'(a,f14.4)')  '    theta      ', theta
@@ -411,7 +440,7 @@
    demax=MAX(demax,ABS(de))
    w=walltime()
    wi=w - wlast
-   eta_s=w*DBLE(nout - iout)/DBLE(iout)
+   eta_s=w*DBLE(nout - iout)/DBLE(MAX(1,iout - ioutstart))
    nbi=nblock - nblock0
    nfi=nforce - nforce0
 !
@@ -450,9 +479,17 @@
      WRITE(6,'(a,i0)') '   steps held at kmax this interval ', nclamp - nclamp0
      IF (usetree) WRITE(6,'(a,i12,a,i0)') '   tree nodes              ', nnode, &
 &      '   builds so far ', ntreebuilt
-     IF (closebinaries) WRITE(6,'(a,i0,a,i0,a,i0,a)') '   binaries as one body    ', &
-&      nbin, '   (closed ', nclosed - nclosed0, ', opened ', nopened - nopened0, &
-&      ' this interval)'
+     IF (closebinaries) WRITE(6,'(a,i0,a,i0,a,i0,a)') '   groups as one body      ', &
+&      nbin, '   (binaries closed ', nclosed - nclosed0, ', opened ', &
+&      nopened - nopened0, ' this interval)'
+     IF (fewbody) WRITE(6,'(a,i0,a,i0,a,i0,a,i0)') '   few-body groups         formed ', &
+&      nfewformed - nfewformed0, ', opened ', nfewopened - nfewopened0, &
+&      ' this interval;  triples frozen so far ', nfrozen, ';  steps ', nfewsteps
+     IF (useac) WRITE(6,'(a,i0,a,i0,a)') '   neighbour scheme        ', &
+&      nregular - nregular0, ' full sums, ', nirregular - nirregular0, &
+&      ' neighbour sums this interval'
+     IF (rcoll > 0.d0) WRITE(6,'(a,i0,a,i0,a,i0)') '   mergers                 ', &
+&      nmerged - nmerged0, ' this interval, ', nmerged, ' so far;  stars left ', ntot
      WRITE(6,'(a,a,a,a,a,a)') '   wall time   interval', hms(wi), '   total', &
 &      hms(w), '   left', hms(eta_s)
      IF (wi > 0.d0) WRITE(6,'(a,es11.3,a)') '   speed      ', DBLE(nfi)/wi, &
@@ -465,8 +502,18 @@
    IF (nclamp > nclamp0) WRITE(6,'(a,f0.4,a,i0,a)') '  ** NOTE t = ', time, &
 &    ' Myr: ', nclamp - nclamp0, ' steps were held at the shortest timestep (kmax)'
 !
+   IF (nmerged > nmerged0 .AND. .NOT. lverbose) WRITE(6,'(a,f0.4,a,i0,a,i0,a)') &
+&    '  ** NOTE t = ', time, ' Myr: ', nmerged - nmerged0, &
+&    ' merger(s) since the last output (', nmerged, ' so far) - see '// &
+&    TRIM(runid)//'_mergers.dat'
+!
    eprev=etot
    wlast=w
+   nmerged0=nmerged
+   nfewformed0=nfewformed
+   nfewopened0=nfewopened
+   nregular0=nregular
+   nirregular0=nirregular
    nblock0=nblock
    nforce0=nforce
    nclamp0=nclamp
@@ -495,7 +542,11 @@
    IF (time > time0) WRITE(6,'(a,es14.3)') '  steps per star per Myr ', &
 &    DBLE(nforce)/DBLE(ntot)/(time - time0)
    IF (lverbose .AND. closebinaries) WRITE(6,'(a,i0,a,i0,a,i0)') &
-&    '  binaries closed ', nclosed, ', opened ', nopened, ', still closed ', nbin
+&    '  binaries closed ', nclosed, ', opened ', nopened, ', groups now ', nbin
+   IF (lverbose .AND. fewbody) WRITE(6,'(a,i0,a,i0,a,i0)') &
+&    '  few-body groups formed ', nfewformed, ', opened ', nfewopened, &
+&    ', triples frozen ', nfrozen
+   IF (nmerged > 0) WRITE(6,'(a,i14)') '  stellar mergers        ', nmerged
    WRITE(6,'(a)') dline
 !
    END SUBROUTINE endinfo
@@ -557,6 +608,86 @@
    END IF
    END SUBROUTINE hdrcommon
 ! =====================================================================
+   FUNCTION physlist() RESULT(str)
+!
+! the physics and methods switched on in this run, as a list of words
+! for the header key 'physics'. A reader can test for a word to find
+! out whether, for example, a tide was on.
+!
+! >>> ADD NEW PHYSICS HERE (one word, no spaces), e.g. stellar_evolution
+!
+   CHARACTER(len=256) :: str
+!
+   str='gravity'
+   IF (ltide) str=TRIM(str)//' tide'
+   IF (closebinaries) str=TRIM(str)//' binaries'
+   IF (fewbody) str=TRIM(str)//' few_body'
+   IF (rcoll > 0.d0 .AND. mergers) str=TRIM(str)//' mergers'
+   IF (rcoll > 0.d0 .AND. .NOT. mergers) str=TRIM(str)//' collision_stop'
+   IF (usetree) str=TRIM(str)//' tree'
+   IF (useac) str=TRIM(str)//' neighbour_scheme'
+!
+   END FUNCTION physlist
+! =====================================================================
+   SUBROUTINE hdrphysics(u)
+!
+! the header lines that depend on which physics is switched on. Each
+! block is written only when its physics is on, so a file from a run
+! without (say) a tide simply has no tidal keys - readers must treat
+! every key here as optional. Nothing else in the code depends on
+! these lines, so blocks can be added freely.
+!
+! >>> ADD THE HEADER LINES OF NEW PHYSICS HERE, as a new IF block, e.g.
+!       IF (stellarevolution) THEN
+!         CALL hdrs(u,'stellar_evolution','sse')
+!         CALL hdrd(u,'metallicity',zmet)
+!       END IF
+!
+   INTEGER, INTENT(IN) :: u
+   DOUBLE PRECISION :: fconv,tv(1:9)
+!
+   fconv=1.d0/(vunit*1.d3)
+   CALL hdrs(u,'physics',physlist())
+! Galactic tide
+   CALL hdrs(u,'tidal',tidal)
+   IF (ltide) THEN
+     CALL hdrd(u,'tidal_omega_km_s_kpc',omega/fconv)
+     tv=RESHAPE(TRANSPOSE(ttid),(/9/))/fconv**2
+     CALL hdrv(u,'tidal_tensor_km2_s2_kpc2',tv,9)
+     IF (TRIM(tidal) == 'solar') THEN
+       CALL hdrd(u,'oort_A_km_s_kpc',oorta)
+       CALL hdrd(u,'oort_B_km_s_kpc',oortb)
+       CALL hdrd(u,'rho0_Msun_pc3',rho0)
+     END IF
+   END IF
+! binaries and few-body groups
+   IF (closebinaries) THEN
+     CALL hdri(u,'groups_as_one_body',INT(nbin,KIND=8))
+     CALL hdri(u,'binaries_closed',nclosed)
+     CALL hdri(u,'binaries_opened',nopened)
+   END IF
+   IF (fewbody) THEN
+     CALL hdri(u,'few_body_groups_formed',nfewformed)
+     CALL hdri(u,'few_body_groups_opened',nfewopened)
+     CALL hdri(u,'triples_frozen',nfrozen)
+   END IF
+! collisions and mergers
+   IF (rcoll > 0.d0) THEN
+     CALL hdrd(u,'collision_radius_Rsun',rcoll)
+     IF (mergers) THEN
+       CALL hdri(u,'mergers',nmerged)
+       CALL hdri(u,'mergers_since_last_snapshot',nmerged - nmergedsnap)
+       CALL hdrd(u,'energy_removed_by_mergers',emerged*vunit**2)
+     END IF
+   END IF
+! neighbour scheme
+   IF (useac) THEN
+     CALL hdri(u,'neighbours_wanted',INT(nnbopt,KIND=8))
+     CALL hdrd(u,'etar',etar)
+   END IF
+!
+   END SUBROUTINE hdrphysics
+! =====================================================================
    FUNCTION datestamp() RESULT(str)
    CHARACTER(len=19) :: str
    INTEGER :: dv(1:8)
@@ -593,38 +724,36 @@
 !   header lines '# key = value', ending with '# end_header'
 !   then one line per star:  id m x y z vx vy vz type phi dt
 !   type is the name of the particle type (see typename in nbvars)
+! THE HEADER IS MEANT TO GROW. The rules that keep old and new files
+! readable by the same programs are:
+!   - a reader looks keys up by name and ignores keys it does not know
+!   - a key that is missing means that physics was off (the key
+!     'physics' lists what was on); see hdrphysics
+!   - the columns are named in the key 'columns': readers find a
+!     column by its name, and new columns are added after the old ones
+!     (readic only needs the first nine)
 ! The initial conditions generators write the same format (first 9
 ! columns only), and any snapshot can be used as initial conditions.
 ! (NBODY-SNAPSHOT 1 was the same without the type column.)
 !
    DOUBLE PRECISION, INTENT(IN) :: time
    INTEGER(KIND=8), INTENT(IN) :: nforce
-   INTEGER :: i,k,l,ns
+   INTEGER :: i,k,l,l2,ns,nm
    INTEGER, ALLOCATABLE :: sid(:),sord(:),styp(:)
    DOUBLE PRECISION, ALLOCATABLE :: sdat(:,:),skey(:)
    CHARACTER(len=512) :: fname
-   DOUBLE PRECISION :: fconv,tv(1:9),phit,tx(1:3),dtyr,sep
-   DOUBLE PRECISION :: x1(1:3),u1(1:3),x2(1:3),u2(1:3)
+   DOUBLE PRECISION :: phit,tx(1:3),dtyr,phim
+   DOUBLE PRECISION :: xm(1:3,1:kfmax),um(1:3,1:kfmax)
 !
    fname=snapname(time)
-   fconv=1.d0/(vunit*1.d3)
 !
    OPEN(4,file=TRIM(fname),status='replace')
    CALL hdrs(4,'format','NBODY-SNAPSHOT 2')
    CALL hdrcommon(4)
    CALL hdrs(4,'particle_types',typecounts())
    CALL hdrd(4,'time_Myr',time)
-   CALL hdrs(4,'tidal',tidal)
-   IF (ltide) THEN
-     CALL hdrd(4,'tidal_omega_km_s_kpc',omega/fconv)
-     tv=RESHAPE(TRANSPOSE(ttid),(/9/))/fconv**2
-     CALL hdrv(4,'tidal_tensor_km2_s2_kpc2',tv,9)
-     IF (TRIM(tidal) == 'solar') THEN
-       CALL hdrd(4,'oort_A_km_s_kpc',oorta)
-       CALL hdrd(4,'oort_B_km_s_kpc',oortb)
-       CALL hdrd(4,'rho0_Msun_pc3',rho0)
-     END IF
-   END IF
+   CALL hdri(4,'bodies',INT(n,KIND=8))
+   CALL hdrphysics(4)
    CALL hdrd(4,'softening_pc',eps)
    CALL hdrd(4,'eta',eta)
    CALL hdrd(4,'etap',etap)
@@ -650,8 +779,8 @@
 &    'tidal potential per unit mass; dt = current timestep; rows in id order')
    WRITE(4,'(a)') '# end_header'
 !
-! all ntot stars: binaries treated as one body are split into their two
-! stars (phi of each includes its companion), then written in id order
+! all ntot stars: groups treated as one body are split into their
+! stars (phi of each includes its companions), then written in id order
    ALLOCATE(sid(1:ntot),sdat(1:9,1:ntot),sord(1:ntot),skey(1:ntot))
    ALLOCATE(styp(1:ntot))
    ns=0
@@ -669,16 +798,17 @@
        styp(ns)=itype(i)
        sdat(1:9,ns)=(/m(i), r(1:3,i), v(1:3,i)*vunit, phit*vunit**2, dtyr/)
      ELSE
-       CALL bincomp(k,r(1:3,i),v(1:3,i),time/tunit,x1,u1,x2,u2)
-       sep=SQRT(SUM((x1 - x2)**2))
-       ns=ns + 1
-       sid(ns)=bident(1,k)
-       styp(ns)=btype(1,k)
-       sdat(1:9,ns)=(/bmass(1,k), x1, u1*vunit, (phit - bmass(2,k)/sep)*vunit**2, dtyr/)
-       ns=ns + 1
-       sid(ns)=bident(2,k)
-       styp(ns)=btype(2,k)
-       sdat(1:9,ns)=(/bmass(2,k), x2, u2*vunit, (phit - bmass(1,k)/sep)*vunit**2, dtyr/)
+       CALL grpcomp(k,r(1:3,i),v(1:3,i),time/tunit,nm,xm,um)
+       DO l=1,nm
+         phim=phit
+         DO l2=1,nm
+           IF (l2 /= l) phim=phim - bmass(l2,k)/SQRT(SUM((xm(1:3,l) - xm(1:3,l2))**2))
+         END DO
+         ns=ns + 1
+         sid(ns)=bident(l,k)
+         styp(ns)=btype(l,k)
+         sdat(1:9,ns)=(/bmass(l,k), xm(1:3,l), um(1:3,l)*vunit, phim*vunit**2, dtyr/)
+       END DO
      END IF
    END DO
    skey(1:ns)=DBLE(sid(1:ns))
@@ -690,6 +820,7 @@
    END DO
    DEALLOCATE(sid,sdat,sord,skey,styp)
    CLOSE(4)
+   nmergedsnap=nmerged
    IF (lverbose) WRITE(6,'(a,a)') '   snapshot written: ', TRIM(fname)
 !
    END SUBROUTINE snapshot

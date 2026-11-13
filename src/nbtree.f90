@@ -71,8 +71,8 @@
 ! the root plus 3 nodes per body and nspare for each of the 8 top-level
 ! octants is generous, and overflow stops with a message
 !
-   nnodemax=3*ntot + 8*nspare + 1
-   ALLOCATE(tperm(1:ntot),toct(1:ntot),tfirst(1:nnodemax),tcount(1:nnodemax))
+   nnodemax=3*nalloc + 8*nspare + 1
+   ALLOCATE(tperm(1:nalloc),toct(1:nalloc),tfirst(1:nnodemax),tcount(1:nnodemax))
    ALLOCATE(tnext(1:nnodemax),tleaf(1:nnodemax))
    ALLOCATE(tm(1:nnodemax),tcom(1:3,1:nnodemax),tcv(1:3,1:nnodemax))
    ALLOCATE(tbmax(1:nnodemax),ts2(1:3,1:3,1:nnodemax),ts3(1:10,1:nnodemax))

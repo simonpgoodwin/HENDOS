@@ -14,10 +14,13 @@ what it does, change its entry here in the same edit.**
 | `nbvars.f90`  | `nbvars`  | shared data: parameters, particle arrays, particle types | - |
 | `nbsetup.f90` | `nbsetup` | set-up and input: units, parameter file, data directory, initial conditions | nbvars |
 | `nbtree.f90`  | `nbtree`  | Barnes-Hut tree | nbvars |
-| `nbforce.f90` | `nbforce` | gravity: forces, jerks, tide, energies | nbvars, nbtree |
-| `nbstep.f90`  | `nbstep`  | timesteps: starting steps and block timestep levels | nbvars, nbtree, nbforce |
-| `nbbin.f90`   | `nbbin`   | unperturbed binaries, Kepler orbits, stellar collisions | nbvars, nbtree, nbforce, nbstep |
+| `nbac.f90`    | `nbac`    | Ahmad-Cohen neighbour scheme | nbvars |
+| `nbforce.f90` | `nbforce` | gravity: forces, jerks, tide, energies | nbvars, nbtree, nbac |
+| `nbstep.f90`  | `nbstep`  | timesteps: starting steps and block timestep levels | nbvars, nbtree, nbac, nbforce |
+| `nbfew.f90`   | `nbfew`   | few-body integrator and triple stability test (stand-alone) | - |
+| `nbbin.f90`   | `nbbin`   | binaries, few-body groups, collisions and mergers | nbvars, nbtree, nbac, nbforce, nbstep, nbfew |
 | `nbout.f90`   | `nbout`   | output: screen, diagnostics, snapshots | nbvars, nbforce, nbbin |
+| `nbrestart.f90` | `nbrestart` | binary restart files | nbvars, nbsetup, nbac, nbout |
 | `nbana.f90`  | `nbana`  | in-run analysis files | nbvars, nbout |
 | `hermite.f90` | program `hermite` | main program: the integration loop | all of the above |
 | `ics/makeics.f90` | program `makeics` | the initial conditions generator | the five files below |
@@ -41,7 +44,10 @@ No calculations: declarations of everything shared between modules.
   counters, block-timestep clock.
 - **particle arrays**: positions, velocities, force derivatives, masses, ids,
   types (`itype`), timestep levels; and the table of closed binaries
-  (`bmass`, `bident`, `btype`, `brel`, `bepoch`).
+  (`bmass`, `bident`, `btype`, `brel`, `bepoch`), now a table of *groups*:
+  binaries, few-body groups and frozen triples (`bnum`, `bmode`, `bx`, `bv`,
+  `brel2`), with up to `kfmax` = 6 stars each; and the arrays of the neighbour
+  scheme (split forces, neighbour lists, regular steps).
 - `typecode(name)` - function: the integer code of the particle type called
   `name` (any case), or 0 if there is no such type.
 
@@ -85,6 +91,27 @@ No calculations: declarations of everything shared between modules.
 - `treeperturb(...)` - tidal perturbation sum on a binary from the tree.
 - `treenearest(i,jn)` - nearest body to body `i` from the tree.
 
+## nbac.f90 - Ahmad-Cohen neighbour scheme (only used when `useac` is on)
+The scheme is explained at the top of the file.
+- `acalloc` - chooses the list sizes if they were left automatic and
+  allocates the arrays.
+- `acsetrs0` - first guess of the neighbour-sphere radius.
+- `acforce(i,inpar)` - the force on active star `i`: an irregular step
+  (neighbour sum plus the extrapolated regular force), a regular step (full
+  sum, regular-force corrector, new neighbour list) or the first full sum of
+  a new body.
+- `pairsum(...)` - adds the force of one star on another (the same pair
+  interaction as in `forces`).
+- `nbsum(i,nl,list,...)` - force on `i` from the stars in a list.
+- `fullsum(i,par,...)` - force on `i` from all stars, shared over the threads
+  if `par`.
+- `actide(i,a,jk)` - adds the Galactic tide to a total force and jerk.
+- `aclist(i,par,init,nl,newl)` - makes a new neighbour list and adjusts the
+  sphere radius towards `nnbopt` neighbours.
+- `acmoverow(src,dst)` - copies a body's neighbour-scheme data to another slot.
+- `acmoved(src,dst)`, `acremoved(j,irep)`, `acadded(jn,i0)` - keep every
+  list correct when a body is moved, removed or created.
+
 ## nbforce.f90 - gravity
 - `forces` - acceleration and jerk on every active particle from all the
   others at their predicted positions: the tree if `usetree`, otherwise direct
@@ -101,37 +128,70 @@ No calculations: declarations of everything shared between modules.
 - `newlevel(i)` - new timestep level of particle `i` after its step: the
   smaller of the Aarseth criterion and the pairwise criterion, with the block
   rules (down by any amount, up one level only when the time allows).
+- `commlev(k,t8)` - function: nearest timestep level that fits the block
+  structure at the current time.
+- `acstart(i)`, `acaccept(i)`, `aclevel(i)` - neighbour scheme: start the
+  regular step of a new body; keep the new split forces when a step is
+  accepted; choose the regular timestep level after `newlevel`.
 - `getlevel(dtw,k)` - turns a wanted timestep into a level (power of two of
   `tout`), limited by `kmax`; counts steps held at the limit.
 
-## nbbin.f90 - binaries, Kepler orbits, collisions
-Kepler orbits
+## nbfew.f90 - few-body tools (stand-alone: no other module is used)
+- `fewacc(...)` - accelerations and jerks of the stars of a group from each
+  other, the shortest pairwise timescale and the closest pair.
+- `fewint(nm,mm,x,v,tint,...)` - integrates an isolated group for a given
+  time: 4th-order Hermite, one shared timestep. Stops early if two stars
+  collide.
+- `elements(mu,rr,vr,a,ecc,h)` - semi-major axis, eccentricity and angular
+  momentum of a two-body orbit.
+- `hierarchy(...)` - is a triple a stable hierarchy (Mardling & Aarseth
+  2001)? Returns the inner pair, the outer star and the two orbits.
+
+## nbbin.f90 - binaries, few-body groups, collisions and mergers
+How groups are closed, opened and frozen is explained at the top of the file.
+
+Kepler orbits and groups
 - `kepler(mu,r0,v0,dt,r1,v1)` - advances a bound two-body orbit by `dt` exactly.
-- `bincomp(k,...)` - positions and velocities of the two stars of closed
-  binary `k` now.
+- `bincomp(k,...)` - positions and velocities of the two stars of binary `k`.
+- `grpcomp(k,xc,vc,tnow,nm,xm,um)` - positions and velocities of the stars
+  of any group `k` now (binary, few-body group or frozen triple).
+- `fewadvance(k,xc,vc,tnow)` - brings the integration of few-body group `k`
+  up to date, merging stars inside it that collide.
 - `pairorbit(...)` - binding energy and apocentre of a pair.
 - `pericentre(...)` - function: two-body pericentre distance of a pair.
 
-Collisions
-- `collision(i,j,...)` - prints the collision alert and stops the run.
+Collisions and mergers
+- `collision(i,j,...)` - prints the collision alert and stops the run (used
+  when `mergers` is off).
   - `collstar(l)` (internal) - prints the id, mass and type of one body.
-- `collcheck(tnow)` - after each block, tests active bodies that came close to
-  another for a collision (within `rcoll`).
+- `mergetype(t1,t2)` - function: the type of the star made by a merger.
+- `mergelog(...)` - announces a merger on the screen and adds a line to
+  `<runid>_mergers.dat`.
+- `mergestars(i,j,t8,tnow)` - merges two single stars into one.
+- `collcheck(t8,tnow)` - after each block, tests active bodies that came close
+  to another for a collision (within `rcoll`) and merges them or stops.
+- `paircollide(i,j,t8,tnow)` - a bound pair whose orbit touches: merge or stop.
 
 Finding neighbours and perturbations
-- `perturb(...)` - the perturbation gamma on a binary from all other bodies.
+- `gperturb(...)` - the perturbation gamma on a group from all other bodies.
+- `grpgamma(i,tnow,gam)` - gamma of the existing group whose c.o.m. is `i`.
 - `nearest(i,jn)` - nearest body to body `i`.
+- `nearestx(i,jex,jn)` - the same, not counting body `jex`.
 
-Closing and opening binaries
+Closing and opening
 - `moverow(src,dst)` - copies all the data of one body to another slot.
-- `commlev(k,t8)` - function: nearest timestep level that fits the block
-  structure at the current time.
-- `closebin(i,j,...)` - replaces two stars by one centre-of-mass body.
-- `openbin(i,...)` - splits a centre-of-mass body back into its two stars.
-- `closeable(i,j,...)` - function: true if two stars are a bound, unperturbed pair.
-- `bincheck(t8,tnow)` - after each block, opens a binary that has become
-  perturbed and closes a pair that has become unperturbed.
-- `binstart(tnow)` - closes all unperturbed binaries in the initial conditions.
+- `startbody(nl,list,t8,levmin)` - forces and first timesteps of new bodies.
+- `closegroup(nm,list,mode,...)` - replaces `nm` stars by one c.o.m. body.
+- `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars.
+- `pairstate(i,j)` - function: 0 nothing, 1 the pair can be closed as a
+  binary, 2 the pair will collide.
+- `tryfew(nb,bod,t8,tnow,formed)` - makes a few-body group of some bodies if
+  it would be isolated.
+- `tryfreeze(k)` - freezes a few-body group of three if it is a stable triple.
+- `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
+  among the bodies that have just stepped.
+- `binstart(tnow)` - closes binaries, merges touching pairs and makes
+  few-body groups in the initial conditions.
 
 ## nbout.f90 - output
 Small tools
@@ -140,6 +200,8 @@ Small tools
 - `typecounts()` - function: text giving the number of each particle type.
 - `indexsort(nn,a,idx)` - index that sorts an array (heapsort).
 - `datestamp()` - function: date and time as text.
+- `physlist()` - function: the physics switched on, for the header key
+  `physics`. **New physics adds its word here.**
 
 Diagnostics
 - `diagnose(time)` - energies (including closed binaries), centre of mass,
@@ -158,10 +220,21 @@ Files
 - `hdrs`, `hdrd`, `hdrv`, `hdri` - write one `# key = value` header line (text,
   real, several reals, integer).
 - `hdrcommon(u)` - the header lines common to every output file.
+- `hdrphysics(u)` - the header lines that depend on which physics is on (tide,
+  binaries, few-body, mergers, neighbour scheme), each block written only when
+  its physics is on. **New physics adds its header block here.**
 - `snapname(time)` - function: the snapshot file name, including the data
   directory.
 - `snapshot(time,nforce)` - writes a snapshot (all stars, closed binaries
   split into their two stars, in id order, with types).
+
+## nbrestart.f90 - restart files
+The file format (a list of named sections) is explained at the top of the file.
+- `restartname()` - function: the restart file name.
+- `secthead(u,name,nrec)` - starts a section of the file.
+- `writerestart(time,iout,nblock,nforce)` - writes the complete state.
+- `readrestart(time,iout,nblock,nforce)` - reads it, allocates the arrays and
+  sets up the run to carry on. Sections it does not know are skipped.
 
 ## nbana.f90 - in-run analysis
 How to add a new analysis is described at the top of the file.
@@ -179,19 +252,22 @@ How to add a new analysis is described at the top of the file.
 
 ## hermite.f90 - main program
 No subroutines. In order: read the parameter file name, `setunits`,
-`readparams`, `checkdatadir`, `readic`, set up the block clock, `firststep`,
-`collcheck`, `binstart`, `startinfo`, first snapshot and analysis. Then the
-loop over output intervals; inside it the loop over blocks:
+`readparams`, `checkdatadir`; then either `readic`, set up the block clock,
+`firststep`, `collcheck`, `binstart`, `startinfo`, first snapshot and analysis,
+or (with `restart`) `readrestart`. Then the loop over output intervals; inside
+it the loop over blocks:
 1. find the next block time and the active particles (the list is made in
    parallel: one piece of the particles per thread, joined up in order)
 2. predict all particles to that time
 3. rebuild the tree or refresh its moments (if `usetree`)
-4. `forces`, then correct the active particles (`niter` times)
-5. accept the step and choose new timestep levels (`newlevel`)
+4. `forces`, then correct the active particles (`niter` times); with the
+   neighbour scheme a star on a regular step also gets its regular correction
+5. accept the step (`acaccept`) and choose new timestep levels (`newlevel`,
+   `aclevel`)
 6. `collcheck` and `bincheck`
 
-At the end of each output interval: `statusout`, `snapshot`, `ana_do`.
-Finally `ana_end` and `endinfo`.
+At the end of each output interval: `statusout`, `snapshot`, `ana_do`,
+`writerestart`. Finally `ana_end` and `endinfo`.
 
 ## ics/ - the initial conditions generator
 One stand-alone program, `makeics`, separate from the N-body code (it uses none

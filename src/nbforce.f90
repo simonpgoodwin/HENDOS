@@ -8,6 +8,7 @@
 !
    USE nbvars
    USE nbtree
+   USE nbac
    IMPLICIT NONE
 !
    CONTAINS
@@ -29,14 +30,33 @@
 !    stars are done one at a time and threads share out the j-sum,
 !    combined with reductions (if n >= nompj, otherwise serial)
 ! Newton's 3rd law is NOT used as it causes races between threads.
-! The two copies of the pair interaction below must be kept identical.
+! The two copies of the pair interaction below must be kept identical
+! (and the same as pairsum in module nbac).
+!
+! With useac the Ahmad-Cohen neighbour scheme does the forces instead
+! (module nbac): most steps then only sum over a star's neighbours.
 !
    INTEGER :: ia,i,j
    DOUBLE PRECISION :: ax,ay,az,jx,jy,jz,dx,dy,dz,dvx,dvy,dvz,xi,yi,zi
    DOUBLE PRECISION :: vxi,vyi,vzi,mi,rad2,rinv,rinv2,mor,drdv,dv2,tmin2
    DOUBLE PRECISION :: d2u,rm2
 !
-   IF (usetree) THEN
+   IF (useac) THEN
+! ---------------- neighbour scheme: big blocks share out the active
+! stars, small blocks share out each star's sums (inside acforce)
+     IF (nact >= nompmin) THEN
+!$OMP PARALLEL DO SCHEDULE(DYNAMIC,1) PRIVATE(ia)
+       DO ia=1,nact
+         CALL acforce(ilist(ia),.TRUE.)
+       END DO
+!$OMP END PARALLEL DO
+     ELSE
+       DO ia=1,nact
+         CALL acforce(ilist(ia),.FALSE.)
+       END DO
+     END IF
+!
+   ELSE IF (usetree) THEN
 ! ---------------- Barnes-Hut tree: each walk is independent, so the
 ! active stars are shared over the threads (dynamic: walks differ)
 !$OMP PARALLEL DO IF(nact >= nompmin) SCHEDULE(DYNAMIC,4) &

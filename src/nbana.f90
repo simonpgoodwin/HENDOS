@@ -63,7 +63,7 @@
 !
    fname=ananame(name)
    INQUIRE(file=TRIM(fname),exist=ex)
-   IF (time0 > 0.d0 .AND. ex) THEN
+   IF ((time0 > 0.d0 .OR. restart) .AND. ex) THEN
 ! restart - carry on with the existing file
      OPEN(u,file=TRIM(fname),status='old',position='append')
    ELSE
@@ -140,6 +140,10 @@
        IF (ex) clash=.TRUE.
      END IF
    END IF
+   INQUIRE(file=TRIM(datadir)//TRIM(runid)//'_mergers.dat',exist=ex)
+   IF (ex) clash=.TRUE.
+   INQUIRE(file=TRIM(datadir)//TRIM(runid)//'_restart.bin',exist=ex)
+   IF (ex) clash=.TRUE.
    IF (clash) THEN
      WRITE(6,'(a)') ' ERROR: output files for runid '''//TRIM(runid)// &
 &     ''' already exist here.'

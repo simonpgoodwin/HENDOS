@@ -10,6 +10,7 @@ Henderson's Relish). This file is the overview; the other READMEs are
 - `src/ics/FRACTAL_README.md` - how the fractal generator works
 - `run/PARAMS_README.md` - a full description of every parameter
 - `analysis/README.md` - the viewer and the analysis tools
+- `tests/README.md` - the regression tests
 - `benchmark/README.md` - comparing HENDOS with Starlab's kira
 
 **These READMEs are kept up to date with the code: any change to the code
@@ -48,6 +49,9 @@ HENDOS/
     README.md            how to run the comparison and read it
     bench_kira.py        runs HENDOS and Starlab's kira on the same stars
     starlabio.py         converts to and from Starlab's dyn format
+  tests/                 regression tests (Python)
+    README.md            what the tests are and how to add one
+    run_tests.py         runs hermite on problems with known answers
   HENDOS_logo.jpg        the HENDOS logo
   docs/                  notes on the methods (LaTeX)
     larson.tex, .pdf     how the Larson fractals match the size-linewidth relation
@@ -148,6 +152,9 @@ difference between stars rose with separation to the power 0.50 for `larson`,
 - `<datadir>/<runid>_snap_<time>Myr.dat` snapshots, time zero padded so `ls`
   lists them in time order, e.g. `data/test01_snap_000012.2500Myr.dat`
 - `<datadir>/<runid>_ana_<name>.dat` in-run analysis
+- `<datadir>/<runid>_mergers.dat` one line per stellar merger (made at the
+  first merger)
+- `<datadir>/<runid>_restart.bin` restart file, binary (if `trestart` > 0)
 - A new run (start time 0) refuses to start if files for its runid exist in
   the data directory.
 - The `creator` header line of every file is `HENDOS (<source file>)`.
@@ -161,7 +168,18 @@ difference between stars rose with separation to the power 0.50 for `larson`,
 - Then one line per star, in id order: `id m x y z vx vy vz type phi dt`
   (type = particle type name, phi = gravitational + tidal potential per unit
   mass, dt = current timestep).
-- All N stars always appear individually (binaries are invisible in output).
+- All N stars always appear individually (binaries and few-body groups are
+  invisible in output). After a merger there is one star fewer.
+- **The header is meant to grow.** The rules that keep old and new files
+  readable by the same programs: readers look keys up by name and ignore keys
+  they do not know; a key that is missing means that physics was off; the key
+  `physics` lists what was on (e.g. `gravity tide binaries few_body mergers`);
+  and columns are found by name from the `columns` key, with new columns added
+  after the existing ones. The lines that depend on the physics are written by
+  `hdrphysics` in `src/nbout.f90`, one block per piece of physics, each written
+  only when it is switched on - so a run without a tide has no tidal keys, and
+  stellar evolution will add its own block when it is on. `hendosio.py` reads
+  files this way already.
 - Initial-condition generators write the same format (first 9 columns); the code
   reads the first 9 columns and the start time from `time_Myr`, so any snapshot
   restarts a run.
@@ -204,10 +222,33 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   an exact Kepler orbit; opened again when gamma > `gopen`. Binaries in the
   initial conditions are closed at the start. Candidates: stars with steps <
   `dtclose`. Requires eps = 0.
-- **Stellar collisions** (`&collisions`): the run stops with an alert if two
-  stars pass within `rcoll` (default 10 Rsun) - checked from the closest-approach
-  distance in the force loop plus the two-body pericentre. The same `rcoll` is
-  used for every particle type at present.
+- **Few-body encounters** (`fewbody` in `&binaries`; after the `multiples`
+  module of AMUSE): a close group of 3 to 6 stars - a binary meeting a star or
+  another binary, or a perturbed pair and its perturber - whose perturbation by
+  the rest of the cluster is below `gfew` is replaced by one centre-of-mass body
+  and integrated on its own by a small shared-timestep Hermite integrator
+  (`src/nbfew.f90`). The group and the cluster advance together in time. It is
+  opened again when gamma > 10 `gfew`, which is what happens when a star is
+  ejected. A group of three that passes the Mardling & Aarseth (2001) stability
+  test is frozen as two nested Kepler orbits (no secular evolution, so no
+  Kozai-Lidov cycles).
+- **Stellar collisions and mergers** (`&collisions`): two stars that pass
+  within `rcoll` (default 10 Rsun) have collided - checked from the
+  closest-approach distance in the force loop plus the two-body pericentre, and
+  inside few-body groups. With `mergers` on (the default) they are merged: total
+  mass at the centre of mass, id of the more massive, type of the more compact,
+  no mass loss. Each merger is announced on the screen (`** MERGER`), written to
+  `<runid>_mergers.dat` and counted in the snapshot headers; the orbital energy
+  removed is tracked so the energy check still works. With `mergers` off the run
+  stops with an alert. The same `rcoll` is used for every particle type.
+- **Neighbour scheme** (`&neighbours`): Ahmad-Cohen scheme for direct
+  summation in its Hermite form. Each star has a neighbour list; the neighbour
+  (irregular) force is summed every step and the rest (regular force) only on
+  longer regular steps, being extrapolated linearly in between and corrected by
+  a Hermite corrector over the regular step. Not used with the tree.
+- **Restart files** (`trestart`, `restart`): the complete state in binary,
+  written at output times, from which a run carries on exactly. The file is a
+  list of named sections that a reader can skip, so new physics can add its own.
 - **Barnes-Hut tree** (`&tree`): octree with monopole, quadrupole and octupole
   moments, opening angle `theta`; jerk from monopole + internal-motion quadrupole
   term. The tree is rebuilt every `ntreebuild` block steps (standard value 10)
@@ -227,16 +268,45 @@ with `OMP_NUM_THREADS` and printed at the start of a run.
   are used. The tree is identical to a serial build.
 - **Tree moments**: parallel over the leaves, then over the top-level subtrees
   for the internal nodes.
+- **Neighbour scheme**: big blocks share out the active stars; for small
+  blocks each full sum and neighbour search is shared out; the list
+  bookkeeping when bodies change is parallel.
 - **Other**: starting timesteps, energies and potentials, and the O(N) sums in
   the binary routines (perturbation, nearest neighbour).
 
 Still serial, because they are cheap or rare: the binary and collision
-bookkeeping between blocks, output and the in-run analysis.
+bookkeeping between blocks, the few-body integrator (a handful of stars),
+output and the in-run analysis.
+
+## Testing
+`tests/run_tests.py` runs `hermite` on 15 small problems with known answers
+(two-body orbits, the Pythagorean problem, a frozen triple, a Plummer sphere
+by direct sums, neighbour scheme, tree and with a tide, a merger, restarts,
+header flexibility) and checks each against a tolerance. Run it after every
+change. See `tests/README.md`.
 
 ## Status
-Developed without a Fortran compiler: algorithms were verified with
-line-by-line Python ports (Hermite + block steps, tide, binaries, tree), and
-the Fortran checked for structure and undeclared names. The particle types,
-the data directory, the split of the source into modules and the initial
-conditions generator have not been compiled either, so the first compilation may need
-small fixes.
+Developed without a Fortran compiler: **none of the Fortran has been compiled
+or run.** The algorithms were checked with Python models before or while the
+Fortran was written (Hermite + block steps, tide, binaries, tree and its
+parallel build, the neighbour scheme, the few-body integrator), and the
+Fortran was checked for block structure. Not covered by any Python model, and
+so the most likely places for mistakes: the bookkeeping that forms and opens
+few-body groups, the neighbour-list updates when bodies change, mergers inside
+the main code, and the restart file. The first compilation will need fixes;
+the regression tests are there to find the rest, and their tolerances are
+first guesses.
+
+Known limits of the new parts:
+- few-body groups are integrated without the cluster's tidal pull on them
+  (that is what `gfew` bounds), and with a shared, not time-symmetric step, so
+  a group that lives for very many orbits without freezing or opening slowly
+  drifts in energy (about 3e-9 of its binding energy per orbit at
+  `etafew` = 0.02);
+- only triples are frozen; stable quadruples (2+2, 3+1) stay integrated;
+- frozen triples have no secular evolution;
+- mergers conserve mass and momentum, with no mass loss, kick or change of
+  radius - stellar evolution will supply those;
+- in the neighbour scheme the predictor's higher-order terms are not corrected
+  when a neighbour list changes (NBODY6 does this), and every block still
+  predicts all N bodies.

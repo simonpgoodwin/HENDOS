@@ -8,6 +8,7 @@
 !
    USE nbvars
    USE nbtree
+   USE nbac
    USE nbforce
    IMPLICIT NONE
 !
@@ -29,6 +30,9 @@
    END DO
    rp=r
    vp=v
+   tcur8=0
+   aclast=.TRUE.
+   IF (useac) CALL acsetrs0
    IF (usetree) CALL treebuild
    CALL forces
    f0=f0p
@@ -47,6 +51,7 @@
      IF (amod > 0.d0 .AND. jmod > 0.d0) dtw=MIN(dtw,etas*amod/jmod)
      CALL getlevel(dtw,lev(i))
      dtk(i)=ISHFT(1_8,kmax - lev(i))
+     IF (useac) CALL acstart(i)
    END DO
 !$OMP END PARALLEL DO
 !
@@ -89,6 +94,85 @@
    dtk(i)=ISHFT(1_8,kmax - lev(i))
 !
    END SUBROUTINE newlevel
+! =====================================================================
+   INTEGER FUNCTION commlev(k,t8)
+!
+! smallest level >= k whose step divides the integer time t8, so a body
+! at t8 can be given it without breaking the block structure
+!
+   INTEGER, INTENT(IN) :: k
+   INTEGER(KIND=8), INTENT(IN) :: t8
+!
+   commlev=MAX(0,MIN(k,kmax))
+   DO WHILE (commlev < kmax)
+     IF (MOD(t8,ISHFT(1_8,kmax - commlev)) == 0) EXIT
+     commlev=commlev + 1
+   END DO
+!
+   END FUNCTION commlev
+! =====================================================================
+   SUBROUTINE acstart(i)
+!
+! neighbour scheme: start the regular step of a new body i, whose
+! irregular level lev(i) and time tk(i) have just been set - the first
+! regular step is the same as the irregular step
+!
+   INTEGER, INTENT(IN) :: i
+!
+   levr(i)=lev(i)
+   dtreg(i)=dtk(i)
+   treg(i)=tk(i)
+!
+   END SUBROUTINE acstart
+! =====================================================================
+   SUBROUTINE acaccept(i)
+!
+! neighbour scheme: the step of star i has been accepted (the main
+! program has set f0, f1 from f0p, f1p and tk(i) to the new time).
+! Keep the new irregular force, and after a regular step the new
+! regular force too; f0, f1 are then the exact totals from the full sum
+! rather than the extrapolated ones the corrector used.
+! Called before newlevel.
+!
+   INTEGER, INTENT(IN) :: i
+!
+   fi(1:3,i)=fin(1:3,i)
+   fid(1:3,i)=fidn(1:3,i)
+   IF (lreg(i)) THEN
+     fr(1:3,i)=frn(1:3,i)
+     frd(1:3,i)=frdn(1:3,i)
+     f0(1:3,i)=fin(1:3,i) + frn(1:3,i)
+     f1(1:3,i)=fidn(1:3,i) + frdn(1:3,i)
+     treg(i)=tk(i)
+   END IF
+!
+   END SUBROUTINE acaccept
+! =====================================================================
+   SUBROUTINE aclevel(i)
+!
+! neighbour scheme: after newlevel has chosen the irregular level of
+! star i, choose its regular level if this was a regular step, and
+! make sure the irregular step is no longer than the regular step.
+! The regular level can go down (smaller step) by any amount, up by one
+! level at a time, and its step must divide the current time so that
+! every regular time is also an irregular time of the star.
+!
+   INTEGER, INTENT(IN) :: i
+   INTEGER :: kr
+!
+   IF (lreg(i)) THEN
+     CALL getlevel(dtwr(i),kr)
+     IF (kr < levr(i)) kr=levr(i) - 1
+     levr(i)=commlev(kr,tk(i))
+     dtreg(i)=ISHFT(1_8,kmax - levr(i))
+     lreg(i)=.FALSE.
+   END IF
+   IF (lev(i) < levr(i)) THEN
+     lev(i)=levr(i)
+     dtk(i)=ISHFT(1_8,kmax - lev(i))
+   END IF
+!
+   END SUBROUTINE aclevel
 ! =====================================================================
    SUBROUTINE getlevel(dtw,k)
 !

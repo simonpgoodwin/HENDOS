@@ -77,6 +77,16 @@ collisional calculation wants. If `eps` is greater than 0 the binary treatment
 
 ---
 
+### `restart` (switch, standard value `.false.`)
+`.true.` carries the run on from its restart file, `<runid>_restart.bin` in
+the data directory, instead of starting again from `icfile`. Use the same
+parameter file as the original run; `tend` may be increased to extend a run
+that has finished. The run then continues exactly as it would have done:
+the restart file holds everything, including timesteps, binaries and the
+energy the run started with, so the energy error keeps counting from the
+original start. The switches `usetree`, `useac` and `fewbody` must be the same
+as when the file was written. See `trestart` for writing the file.
+
 ## `&output` - where output goes and how much
 
 ### `datadir` (text, standard value `'data'`)
@@ -117,6 +127,15 @@ error since the start of the run, |dE/E|, is larger than this. It does not stop
 or change the run.
 
 ---
+
+### `trestart` (Myr, standard value 0.0)
+How often a restart file is written; 0 means never. It should be a whole
+number of `tout`. The file is also written when the run ends, so the run can
+be extended. Each file replaces the one before, and it is written under a
+temporary name first, so a crash while it is being written never loses the
+previous one. Restart files are only worth having for long runs: they are in
+binary, can only be read by HENDOS, and are about 250 bytes per star (more
+with the neighbour scheme). To continue a run from one, set `restart`.
 
 ## `&analysis` - analysis done while the code runs
 
@@ -171,6 +190,35 @@ force. Used only with `tidal = 'tensor'`. The solar value is 27.2.
 
 ---
 
+## `&neighbours` - the Ahmad-Cohen neighbour scheme
+A faster way of doing direct summation. The force on a star is split into the
+part from its nearest neighbours, which changes quickly, and the part from all
+the other stars, which changes slowly. The neighbour part is summed every
+step; the full sum over all stars is done only every few steps, and in between
+the slow part is extrapolated. It is for runs without the tree and is worth
+using above a thousand stars or so. The saving grows with N.
+
+### `useac` (switch, standard value `.false.`)
+`.true.` uses the neighbour scheme. It is switched off, with a warning, if
+`usetree` is on.
+
+### `nnbopt` (whole number, standard value 0)
+The number of neighbours wanted for each star. 0 sets it automatically to
+(N/8)^(3/4): 37 for 1000 stars, 210 for 10,000. The size of each star's
+neighbour sphere is adjusted as the run goes to keep about this many.
+
+### `nnbmax` (whole number, standard value 0)
+The longest neighbour list a star can have. 0 sets it automatically to three
+times `nnbopt` plus 16. It sets the memory used (4 bytes times `nnbmax` per
+star) and must be at least `nnbopt` + 8.
+
+### `etar` (standard value 0.01)
+The accuracy parameter of the timestep on which the slow (regular) force is
+recomputed, used in the same formula as `eta`. Smaller is more accurate and
+slower. If the energy error with the neighbour scheme is worse than without
+it, reduce `etar` first: in tests halving it twice (0.02 to 0.005) reduced the
+energy error by about 200.
+
 ## `&tree` - Barnes-Hut tree forces
 For large numbers of particles. Instead of summing the force from every other
 particle, distant groups of particles are replaced by a few terms describing
@@ -210,7 +258,7 @@ opened.
 
 ## Standard settings - these should rarely need changing
 
-## `&binaries` - unperturbed binaries
+## `&binaries` - unperturbed binaries and few-body encounters
 There is no regularisation. Instead a bound pair that nothing else is
 disturbing is replaced by a single body at its centre of mass, and its orbit is
 followed exactly as a Kepler orbit. This stops a tight binary forcing tiny
@@ -238,13 +286,61 @@ A binary being treated as one body is split back into two stars when its gamma
 rises above this. It must be larger than `gclose`; the gap between them stops
 a binary being closed and opened over and over.
 
+### `fewbody` (switch, standard value `.true.`)
+`.true.` treats close encounters of a few stars separately. When a binary
+meets another star or binary, or three stars come together, and the group of
+them (3 to 6 stars) is isolated from the rest of the cluster, the group is
+taken out of the main calculation and replaced by a single body at its centre
+of mass. Its internal motion is integrated on its own, at the same time as the
+cluster, until the encounter is over: when a star is thrown out the group
+grows, stops being isolated, and its stars are put back. This is much faster
+than leaving them in, because each of the very short steps of a close
+encounter otherwise costs a prediction of every star in the cluster. A group
+of three that settles into a stable hierarchical triple (an inner binary and
+a distant third star, by the Mardling & Aarseth 2001 criterion) is then
+treated as two exact Kepler orbits. It needs `closebinaries` to be on.
+
+### `gfew` (standard value 1.0e-5)
+A few-body group is taken out if its perturbation gamma by the rest of the
+cluster (see `gclose`) is less than `gfew`, and put back if it rises above
+10 times `gfew`. Larger values take groups out sooner and keep them longer,
+which is faster but ignores more of the cluster's pull on them.
+
+### `etafew` (standard value 0.02)
+The timestep accuracy parameter of the few-body integrator: its step is
+`etafew` times the shortest free-fall or flyby time of any pair in the group
+(about 500 steps per orbit of an eccentric binary at 0.02, with an energy
+error of a few parts in 10^9 per orbit). Smaller is more accurate and slower.
+
 ## `&collisions` - stellar collisions
 
 ### `rcoll` (Rsun, standard value 10.0)
-If two particles pass, or are about to pass, within this distance of each
-other the run stops with an alert giving their ids, masses and types.
-Collisions are detected but not yet modelled. 0 switches the check off. The
-same distance is used for every type of particle at present.
+Two stars that pass within this distance of each other have collided. What
+happens then is set by `mergers`. 0 switches the check off. The same distance
+is used for every type of particle at present. A bound pair whose orbit would
+bring it within `rcoll` counts as well, as do stars inside a few-body group.
+
+### `mergers` (switch, standard value `.true.`)
+`.true.`: the two stars are merged into one and the run carries on. The new
+star has the total mass, sits at the centre of mass with the centre-of-mass
+velocity (so mass and momentum are conserved), keeps the id of the more
+massive of the two, and takes the type of the more compact (a star and a
+black hole make a black hole). No mass is lost. Each merger is
+
+- announced on the screen with a line starting `** MERGER`,
+- written as one line to `<runid>_mergers.dat` in the data directory (time,
+  ids, masses and types of the two stars and of the new one, its position and
+  velocity),
+- counted in the header of every snapshot (`mergers` and
+  `mergers_since_last_snapshot`).
+
+The number of stars in the snapshots goes down by one for each merger. The
+orbital energy of the pair is lost from the stellar dynamics; it is kept track
+of, so the energy error on the screen is still a true check of the
+integration.
+
+`.false.`: the run stops with an alert giving the two stars, as it did before
+mergers were added.
 
 ## `&integrator` - the Hermite integrator and its timesteps
 

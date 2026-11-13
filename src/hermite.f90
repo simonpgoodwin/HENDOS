@@ -11,8 +11,13 @@
 ! optional P(EC)^n iteration of the corrector
 ! optional Barnes-Hut tree with octupole moments           (module nbtree)
 ! optional Galactic tide (Hill's approximation, rotating frame)
+! optional Ahmad-Cohen neighbour scheme for direct sums   (module nbac)
 ! unperturbed binaries treated as one body with an exact Kepler orbit,
-!   opened when perturbed (no regularisation)          (module nbbin)
+!   isolated few-body encounters integrated separately, stable triples
+!   as nested Kepler orbits; all opened when perturbed (no
+!   regularisation)                               (modules nbbin, nbfew)
+! stellar collisions: the stars are merged (or the run stops)
+! optional binary restart files for long runs       (module nbrestart)
 ! all the expensive loops are parallelised with OpenMP (compile with
 !   -fopenmp; the number of threads is set with OMP_NUM_THREADS)
 !
@@ -37,6 +42,8 @@
 !   screen     standard or verbose (parameter screen), every tout
 !   snapshots  <runid>_snap_<time>Myr.dat every tsnap   (module nbout)
 !   analysis   <runid>_ana_<name>.dat every tana      (module nbana)
+!   mergers    <runid>_mergers.dat, one line per merger  (module nbbin)
+!   restart    <runid>_restart.bin every trestart    (module nbrestart)
 !
 ! INITIAL CONDITIONS: a snapshot-format file (NBODY-SNAPSHOT), e.g.
 ! from makeics or a previous run (restarts from its time), or a
@@ -50,13 +57,15 @@
    USE nbvars
    USE nbsetup
    USE nbtree
+   USE nbac
    USE nbforce
    USE nbstep
    USE nbbin
    USE nbout
+   USE nbrestart
    USE nbana
    IMPLICIT NONE
-   INTEGER :: i,ia,it,iout,nout,nsnap,nana,nsince,ic,k,nper
+   INTEGER :: i,ia,it,iout,iout0,nout,nsnap,nana,nrest,nsince,ic,k,nper
    INTEGER, ALLOCATABLE :: iscr(:),cact(:),coff(:)
    INTEGER(KIND=8) :: tblock,tend8,nblock,nforce
    DOUBLE PRECISION :: dt,dtp,time
@@ -77,57 +86,78 @@
    eps2=eps*eps                       ! length unit is pc already
 !
 ! ============================================================
-! initial conditions (sets n, time0 and allocates arrays)
-   CALL readic
+! initial conditions (sets n, time0 and allocates arrays), or the
+! complete state of an earlier run from its restart file
+   iout0=0
+   nblock=0
+   nforce=0
+   IF (restart) THEN
+     CALL readrestart(time,iout0,nblock,nforce)
+   ELSE
+     CALL readic
+     IF (useac) CALL acalloc
+   END IF
 !
-! number of output intervals, snapshot and analysis frequency
+! number of output intervals, snapshot, analysis and restart frequency
    nout=NINT((tend - time0)/tout)
    IF (nout < 1) THEN
      WRITE(6,'(a,f0.4,a)') ' ERROR: tend must be at least one tout after '// &
 &      'the start time of the initial conditions (', time0, ' Myr)'
      STOP
    END IF
+   IF (restart .AND. iout0 >= nout) THEN
+     WRITE(6,'(a,f0.4,a)') ' ERROR: the restart file is already at ', time, &
+&      ' Myr - increase tend to carry the run on'
+     STOP
+   END IF
    nsnap=0
    IF (tsnap > 0.d0) nsnap=MAX(1,NINT(tsnap/tout))
    nana=0
    IF (tana > 0.d0) nana=MAX(1,NINT(tana/tout))
+   nrest=0
+   IF (trestart > 0.d0) nrest=MAX(1,NINT(trestart/tout))
 !
 ! a new run must not overwrite the files of an earlier run
-   IF (time0 == 0.d0) CALL checkrunid(nsnap,nana)
+   IF (time0 == 0.d0 .AND. .NOT. restart) CALL checkrunid(nsnap,nana)
    IF (usetree) CALL treealloc
 !
 ! work space for making the list of active particles in parallel
-   ALLOCATE(iscr(1:ntot),cact(1:nthreads),coff(1:nthreads))
+   ALLOCATE(iscr(1:nalloc),cact(1:nthreads),coff(1:nthreads))
 !
 ! block timestep set-up
    dtmax=tout/tunit
    tick=dtmax/2.d0**kmax
    tend8=ISHFT(1_8,kmax)              ! end of one output interval in ticks
 !
+   IF (restart) THEN
+     IF (nana > 0) CALL ana_init
+   ELSE
 ! initial forces and timestep levels, then start-of-run information
-   nclamp=0
-   CALL firststep
-   IF (rcoll > 0.d0) CALL collcheck(time0/tunit)
-   IF (closebinaries) CALL binstart(time0/tunit)
-   CALL startinfo(nout)
+     nclamp=0
+     CALL firststep
+     IF (rcoll > 0.d0) CALL collcheck(0_8,time0/tunit)
+     IF (closebinaries) CALL binstart(time0/tunit)
+     CALL startinfo(nout)
 !
-   time=time0
-   nblock=0
-   nforce=0
-   nsince=0
-   IF (nsnap > 0) THEN
+     time=time0
+     IF (nsnap > 0) THEN
 ! (not when restarting from that same snapshot)
-     IF (TRIM(snapname(time)) /= TRIM(icfile)) CALL snapshot(time,nforce)
+       IF (TRIM(snapname(time)) /= TRIM(icfile)) CALL snapshot(time,nforce)
+     END IF
+     IF (nana > 0) THEN
+       CALL ana_init
+       IF (time0 == 0.d0) CALL ana_do(time)
+     END IF
    END IF
-   IF (nana > 0) THEN
-     CALL ana_init
-     IF (time0 == 0.d0) CALL ana_do(time)
-   END IF
+   nsince=0
 !
 ! =====================================================================
 ! main loop - over output intervals, then over blocks
-   DO iout=1,nout
+   DO iout=iout0 + 1,nout
      tbase=(time0 + DBLE(iout - 1)*tout)/tunit
+! the tree is always rebuilt at the start of an output interval, so
+! that a restarted run does exactly what the original would have done
+     nsince=ntreebuild
 !
      DO
 !
@@ -210,7 +240,9 @@
 !$OMP END PARALLEL DO
 !
 ! evaluate and correct the active particles (repeated niter times)
+       tcur8=tblock
        DO it=1,niter
+         aclast=(it == niter)
 !
 ! forces on active particles from all (predicted) particles
          CALL forces
@@ -233,6 +265,14 @@
 ! add correction (the corrected values are used by any further iteration)
            rp(1:3,i)=rc(1:3,i) + f2(1:3,i)*dt4/24.d0 + f3(1:3,i)*dt5/120.d0
            vp(1:3,i)=vc(1:3,i) + f2(1:3,i)*dt3/6.d0  + f3(1:3,i)*dt4/24.d0
+! neighbour scheme: on a regular step, the correction from the regular
+! force over the whole regular step as well
+           IF (useac) THEN
+             IF (lreg(i)) THEN
+               rp(1:3,i)=rp(1:3,i) + dreg(1:3,i)
+               vp(1:3,i)=vp(1:3,i) + dvreg(1:3,i)
+             END IF
+           END IF
          END DO
 !$OMP END PARALLEL DO
        END DO
@@ -249,23 +289,27 @@
          f2e(1:3,i)=f2(1:3,i) + f3(1:3,i)*dt
          f3e(1:3,i)=f3(1:3,i)
          tk(i)=tblock
+         IF (useac) CALL acaccept(i)
          CALL newlevel(i)
+         IF (useac) CALL aclevel(i)
        END DO
 !$OMP END PARALLEL DO
        nblock=nblock + 1
        nforce=nforce + nact*niter
 !
-! stellar collisions (stops the run), then open perturbed / close
-! unperturbed binaries (serial, rare)
-       IF (rcoll > 0.d0) CALL collcheck(tbase + DBLE(tblock)*tick)
+! stellar collisions (merge the stars or stop the run), then open,
+! close and freeze binaries and few-body groups (serial, rare)
+       IF (rcoll > 0.d0) CALL collcheck(tblock,tbase + DBLE(tblock)*tick)
        IF (closebinaries) CALL bincheck(tblock,tbase + DBLE(tblock)*tick)
 !
 ! end of output interval - everyone is synchronised here
        IF (tblock == tend8) EXIT
      END DO
 !
-! reset integer clock
+! reset integer clock (regular times too: they are all at the end of
+! the interval, or keep their place relative to it)
      tk=0
+     IF (useac) treg(1:n)=treg(1:n) - tend8
      time=time0 + DBLE(iout)*tout     ! Myr
 !
 ! output ----------------------------------------------
@@ -276,6 +320,10 @@
      END IF
      IF (nana > 0) THEN
        IF (MOD(iout,nana) == 0) CALL ana_do(time)
+     END IF
+     IF (nrest > 0) THEN
+       IF (MOD(iout,nrest) == 0 .OR. iout == nout) &
+&        CALL writerestart(time,iout,nblock,nforce)
      END IF
 !
    END DO

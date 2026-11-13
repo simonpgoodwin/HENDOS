@@ -45,6 +45,10 @@
   eps    = 0.0             ! softening length (pc), 0 = no softening
                            !   (binaries are only treated with eps = 0)
 
+  restart = .false.        ! [.false.] .true. = carry this run on from
+                           !   its restart file (see trestart below)
+                           !   instead of starting from icfile
+
 /
 
 
@@ -56,6 +60,8 @@
 !     <runid>_snap_<time>Myr.dat     snapshots, e.g.
 !                                    test01_snap_000012.2500Myr.dat
 !     <runid>_ana_<name>.dat        in-run analysis
+!     <runid>_mergers.dat            one line per stellar merger
+!     <runid>_restart.bin            restart file (if trestart > 0)
 !-----------------------------------------------------------------------
 &output
 
@@ -76,6 +82,11 @@
 
   dewarn = 1.0e-4          ! [1e-4] warn on screen if the relative
                            !   energy error is larger than this
+
+  trestart = 0.0           ! [0] write a restart file every trestart
+                           !   Myr (and at the end), 0 = never. Only
+                           !   needed for long runs. Should be a whole
+                           !   multiple of tout
 
 /
 
@@ -135,6 +146,31 @@
 
 
 !-----------------------------------------------------------------------
+!   NEIGHBOUR SCHEME (Ahmad-Cohen)   -   faster direct summation
+!-----------------------------------------------------------------------
+!   The force on each star is split into a fast-changing part from its
+!   neighbours, summed every step, and a slowly changing part from
+!   everything else, summed only every few steps. For runs without the
+!   tree; worth it above a thousand stars or so.
+!-----------------------------------------------------------------------
+&neighbours
+
+  useac  = .false.         ! [.false.] .true. = use the neighbour scheme
+                           !   (it is switched off if usetree is on)
+
+  nnbopt = 0               ! [0]  number of neighbours wanted per star,
+                           !   0 = automatic, (N/8)^(3/4)
+
+  nnbmax = 0               ! [0]  longest neighbour list, 0 = automatic
+
+  etar   = 0.01            ! [0.01] accuracy parameter of the slow
+                           !   (regular) force timestep: smaller = more
+                           !   accurate and slower
+
+/
+
+
+!-----------------------------------------------------------------------
 !   BARNES-HUT TREE   -   for large associations on large scales
 !-----------------------------------------------------------------------
 !   Forces from an octree with monopole, quadrupole and octupole moments
@@ -169,13 +205,17 @@
 
 
 !-----------------------------------------------------------------------
-!   BINARIES   -   no regularisation
+!   BINARIES AND FEW-BODY ENCOUNTERS   -   no regularisation
 !-----------------------------------------------------------------------
 !   An unperturbed bound pair is treated as one body with an exact
 !   Kepler orbit, so it does not force tiny timesteps; it is split
 !   back into its two stars as soon as it is perturbed. Perturbation
 !   gamma = (tidal force across the orbit) / (binary's own force).
-!   Binaries are invisible in the output (snapshots have all N stars).
+!   A close encounter of 3 to 6 stars that is isolated from the rest
+!   of the cluster is likewise taken out and integrated on its own
+!   until it is over, and a stable hierarchical triple is treated as
+!   two Kepler orbits. All of these are invisible in the output
+!   (snapshots have all N stars).
 !-----------------------------------------------------------------------
 &binaries
 
@@ -189,6 +229,16 @@
   gopen   = 1.0e-5         ! [1e-5]  split again if gamma > gopen
                            !         (must be larger than gclose)
 
+  fewbody = .true.         ! [.true.]  integrate isolated few-body
+                           !         encounters on their own
+
+  gfew    = 1.0e-5         ! [1e-5]  take a few-body group out if its
+                           !         gamma < gfew; it is put back when
+                           !         its gamma > 10 gfew
+
+  etafew  = 0.02           ! [0.02]  timestep accuracy parameter of the
+                           !         few-body integrator
+
 /
 
 
@@ -197,9 +247,15 @@
 !-----------------------------------------------------------------------
 &collisions
 
-  rcoll = 10.0             ! [10]  stop the run with an alert if two
-                           !       stars pass within rcoll (Rsun) of
-                           !       each other, 0 = no check
+  rcoll = 10.0             ! [10]  two stars that pass within rcoll
+                           !       (Rsun) of each other have collided,
+                           !       0 = no check
+
+  mergers = .true.         ! [.true.]  .true.  = merge the two stars
+                           !       into one and carry on; each merger
+                           !       is announced on the screen and
+                           !       written to <runid>_mergers.dat
+                           !       .false. = stop the run with an alert
 
 /
 

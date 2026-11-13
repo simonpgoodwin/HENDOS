@@ -19,7 +19,8 @@ ICS     = $(SRC)/ics
 BUILD   = build
 
 # modules in the order they must be compiled (each uses ones before it)
-MODS    = nbvars nbsetup nbtree nbforce nbstep nbbin nbout nbana hermite
+MODS    = nbvars nbsetup nbtree nbac nbforce nbstep nbfew nbbin nbout \
+          nbrestart nbana hermite
 OBJS    = $(addprefix $(BUILD)/,$(addsuffix .o,$(MODS)))
 
 all: hermite makeics
@@ -38,14 +39,18 @@ makeics: $(ICSRC)
 # which modules each file uses
 $(BUILD)/nbsetup.o: $(BUILD)/nbvars.o
 $(BUILD)/nbtree.o:  $(BUILD)/nbvars.o
-$(BUILD)/nbforce.o: $(BUILD)/nbvars.o $(BUILD)/nbtree.o
-$(BUILD)/nbstep.o:  $(BUILD)/nbvars.o $(BUILD)/nbtree.o $(BUILD)/nbforce.o
-$(BUILD)/nbbin.o:   $(BUILD)/nbvars.o $(BUILD)/nbtree.o $(BUILD)/nbforce.o $(BUILD)/nbstep.o
+$(BUILD)/nbac.o:    $(BUILD)/nbvars.o
+$(BUILD)/nbforce.o: $(BUILD)/nbvars.o $(BUILD)/nbtree.o $(BUILD)/nbac.o
+$(BUILD)/nbstep.o:  $(BUILD)/nbvars.o $(BUILD)/nbtree.o $(BUILD)/nbac.o $(BUILD)/nbforce.o
+$(BUILD)/nbbin.o:   $(BUILD)/nbvars.o $(BUILD)/nbtree.o $(BUILD)/nbac.o $(BUILD)/nbforce.o \
+                    $(BUILD)/nbstep.o $(BUILD)/nbfew.o
 $(BUILD)/nbout.o:   $(BUILD)/nbvars.o $(BUILD)/nbforce.o $(BUILD)/nbbin.o
+$(BUILD)/nbrestart.o: $(BUILD)/nbvars.o $(BUILD)/nbsetup.o $(BUILD)/nbac.o $(BUILD)/nbout.o
 $(BUILD)/nbana.o:  $(BUILD)/nbvars.o $(BUILD)/nbout.o
 $(BUILD)/hermite.o: $(BUILD)/nbvars.o $(BUILD)/nbsetup.o $(BUILD)/nbtree.o \
-                    $(BUILD)/nbforce.o $(BUILD)/nbstep.o $(BUILD)/nbbin.o \
-                    $(BUILD)/nbout.o $(BUILD)/nbana.o
+                    $(BUILD)/nbac.o $(BUILD)/nbforce.o $(BUILD)/nbstep.o \
+                    $(BUILD)/nbbin.o $(BUILD)/nbout.o $(BUILD)/nbrestart.o \
+                    $(BUILD)/nbana.o
 
 $(BUILD)/%.o: $(SRC)/%.f90 | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG)$(BUILD) -c $< -o $@

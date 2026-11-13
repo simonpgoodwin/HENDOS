@@ -57,13 +57,14 @@
    LOGICAL :: bad
    DOUBLE PRECISION :: fconv,pi
    CHARACTER(len=256) :: msg
-   NAMELIST /run/ runid, icfile, tend, tout, eps
-   NAMELIST /output/ datadir, screen, tsnap, dewarn
+   NAMELIST /run/ runid, icfile, tend, tout, eps, restart
+   NAMELIST /output/ datadir, screen, tsnap, dewarn, trestart
    NAMELIST /analysis/ tana, lagrangian
    NAMELIST /tides/ tidal, oorta, oortb, rho0, tij, omegat
    NAMELIST /integrator/ eta, etap, etas, niter, kmax
-   NAMELIST /binaries/ closebinaries, dtclose, gclose, gopen
-   NAMELIST /collisions/ rcoll
+   NAMELIST /binaries/ closebinaries, dtclose, gclose, gopen, fewbody, gfew, etafew
+   NAMELIST /collisions/ rcoll, mergers
+   NAMELIST /neighbours/ useac, nnbopt, nnbmax, etar
    NAMELIST /tree/ usetree, theta, nleaf, ntreebuild
    NAMELIST /computing/ nompmin, nompj
 !
@@ -91,7 +92,17 @@
    niter=1
    kmax=40
    closebinaries=.TRUE.
+   fewbody=.TRUE.
+   gfew=1.d-5
+   etafew=0.02d0
    rcoll=10.d0
+   mergers=.TRUE.
+   restart=.FALSE.
+   trestart=0.d0
+   useac=.FALSE.
+   nnbopt=0
+   nnbmax=0
+   etar=0.01d0
    usetree=.FALSE.
    theta=0.5d0
    nleaf=8
@@ -136,6 +147,9 @@
    REWIND(2)
    READ(2,nml=collisions,iostat=ios,iomsg=msg)
    CALL nmlerror('collisions')
+   REWIND(2)
+   READ(2,nml=neighbours,iostat=ios,iomsg=msg)
+   CALL nmlerror('neighbours')
    REWIND(2)
    READ(2,nml=tree,iostat=ios,iomsg=msg)
    CALL nmlerror('tree')
@@ -277,6 +291,38 @@
        closebinaries=.FALSE.
      END IF
    END IF
+! few-body groups are part of the binary treatment
+   IF (.NOT. closebinaries) fewbody=.FALSE.
+   IF (fewbody) THEN
+     IF (gfew <= 0.d0) THEN
+       WRITE(6,'(a)') ' ERROR: gfew must be > 0'
+       bad=.TRUE.
+     END IF
+     IF (etafew <= 0.d0 .OR. etafew > 0.2d0) THEN
+       WRITE(6,'(a)') ' ERROR: etafew must be between 0 and 0.2'
+       bad=.TRUE.
+     END IF
+   END IF
+! the neighbour scheme is for direct summation only
+   IF (useac .AND. usetree) THEN
+     WRITE(6,'(a)') ' WARNING: neighbour scheme switched off because the '// &
+&      'tree is on (useac is for direct summation)'
+     useac=.FALSE.
+   END IF
+   IF (useac) THEN
+     IF (nnbopt < 0 .OR. nnbmax < 0) THEN
+       WRITE(6,'(a)') ' ERROR: nnbopt and nnbmax must be >= 0 (0 = automatic)'
+       bad=.TRUE.
+     END IF
+     IF (etar <= 0.d0) THEN
+       WRITE(6,'(a)') ' ERROR: etar must be > 0'
+       bad=.TRUE.
+     END IF
+   END IF
+   IF (trestart < 0.d0) THEN
+     WRITE(6,'(a)') ' ERROR: trestart must be >= 0 (0 = no restart files)'
+     bad=.TRUE.
+   END IF
    dtclosei=dtclose*1.d-6/tunit
    IF (usetree) THEN
      IF (theta <= 0.d0 .OR. theta >= 1.d0) THEN
@@ -390,11 +436,19 @@
    ALLOCATE(itype(1:n))
    ALLOCATE(ib(1:n))
    ALLOCATE(rmin2(1:n))
-   ALLOCATE(bmass(1:2,1:n/2+1))
-   ALLOCATE(bident(1:2,1:n/2+1))
-   ALLOCATE(btype(1:2,1:n/2+1))
+   ALLOCATE(bmass(1:kfmax,1:n/2+1))
+   ALLOCATE(bident(1:kfmax,1:n/2+1))
+   ALLOCATE(btype(1:kfmax,1:n/2+1))
+   ALLOCATE(bnum(1:n/2+1))
+   ALLOCATE(bmode(1:n/2+1))
    ALLOCATE(brel(1:6,1:n/2+1))
+   ALLOCATE(brel2(1:6,1:n/2+1))
    ALLOCATE(bepoch(1:n/2+1))
+   IF (fewbody) THEN
+     ALLOCATE(bx(1:3,1:kfmax,1:n/2+1))
+     ALLOCATE(bv(1:3,1:kfmax,1:n/2+1))
+   END IF
+   nalloc=n
    ALLOCATE(lev(1:n))
    ALLOCATE(ilist(1:n))
    ALLOCATE(tk(1:n))
