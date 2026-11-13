@@ -40,8 +40,9 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy |
 | `binary_closed` | the same binary treated as one body | exact Kepler orbit: energy to 1e-10, position, one group |
 | `pythagorean_direct` | Burrau's three-body problem to t = 10, directly | energy |
-| `pythagorean_fewbody` | the same as a few-body group | energy; one group formed |
-| `triple_frozen` | a stable hierarchical triple | frozen as two Kepler orbits; energy; inner orbit unchanged |
+| `pythagorean_fewbody` | the same as a few-body group, with nine light distant stars so that there are the 12 bodies a group of three needs | energy; a group was formed |
+| `fewbody_small_n` | the three stars alone | no group is formed (it would not pay); energy |
+| `triple_frozen` | a stable hierarchical triple, alone | frozen as two Kepler orbits even with three bodies; energy; inner orbit unchanged |
 | `plummer_direct` | 256-star Plummer sphere, 2 Myr, direct | energy; virial ratio; number of stars |
 | `plummer_neighbours` | the same with the neighbour scheme | energy |
 | `plummer_tree` | the same with the tree | energy (looser: the tree is approximate) |

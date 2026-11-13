@@ -289,19 +289,39 @@ def test_pythagorean_direct(t):
 
 
 def test_pythagorean_fewbody(t):
-    """The same, as a few-body group (the whole system is one group)."""
+    """The same as a few-body group, with nine light, distant onlookers
+    (a group of three is only taken out if there are 12 bodies or more)."""
     m, pos, vel = pythagorean()
+    rng = np.random.default_rng(7)
+    far = np.array([200.0 * sphere_point(rng) for _ in range(9)])
+    m = np.concatenate([m, np.full(9, 1.0e-3)])
+    pos = np.vstack([pos, far])
+    vel = np.zeros((12, 3))
     t.write_ics('ics.dat', m, pos, vel)
     r = t.run('pythf', 'ics.dat', run__tend=10 * TUNIT, run__tout=TUNIT,
               output__tsnap=TUNIT)
     s = r.last
     t.check('energy error', energy_error(s), 1e-5)
-    t.check('few-body groups formed', int(s.value('few_body_groups_formed')), 1, 'equal')
-    t.check('stars in the snapshot', s.n, 3, 'equal')
+    t.check('a few-body group was formed', int(s.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('stars in the snapshot', s.n, 12, 'equal')
+
+
+def test_fewbody_small_n(t):
+    """With only three bodies an unstable triple is NOT taken out as a
+    group (it would not pay), but it is still integrated correctly."""
+    m, pos, vel = pythagorean()
+    t.write_ics('ics.dat', m, pos, vel)
+    r = t.run('pyth3', 'ics.dat', run__tend=10 * TUNIT, run__tout=TUNIT,
+              output__tsnap=TUNIT)
+    s = r.last
+    t.check('few-body groups formed', int(s.value('few_body_groups_formed')), 0, 'equal')
+    t.check('energy error', energy_error(s), 1e-4)
 
 
 def test_triple_frozen(t):
-    """A stable hierarchical triple: frozen as two Kepler orbits."""
+    """A stable hierarchical triple: frozen as two Kepler orbits (even
+    with only three bodies, because a frozen triple always pays)."""
     m1, p1, v1, pin = binary(1.0, 1.0, 1.0e-4, 0.0)
     # outer star on a circular orbit of radius 5e-3 pc about the binary
     mt = 3.0

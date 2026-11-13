@@ -35,7 +35,8 @@
 ! FEW     if that pair is bound but perturbed, the pair and the next
 !         nearest body are tried as a group; so are a perturbed group
 !         and its nearest body. The group is formed if its own
-!         gamma < gfew                                    -> few-body
+!         gamma < gfew, and if there are enough bodies in the main
+!         integration for it to pay (see tryfew)          -> few-body
 ! FREEZE  a few-body group of three that is a stable hierarchy
 !                                                         -> triple
 ! OPEN    a binary after one of its c.o.m. steps if gamma > gopen, any
@@ -79,6 +80,9 @@
    USE nbstep
    USE nbfew
    IMPLICIT NONE
+! a few-body group of nm stars is only taken out of the main
+! integration if that has at least nfewfac*nm*(nm-1) bodies (see tryfew)
+   INTEGER, PARAMETER :: nfewfac=2
 !
    CONTAINS
 ! =====================================================================
@@ -1015,17 +1019,47 @@
 !
 ! try to make a few-body group out of the nb bodies in bod (single
 ! stars or groups, all at integer time t8 = internal time tnow). It is
-! made if it has 3 to kfmax stars and its perturbation by the rest of
-! the cluster is below gfew. Any groups among the bodies are opened
-! first, then all the stars are closed as one group.
+! made if it has 3 to kfmax stars, its perturbation by the rest of
+! the cluster is below gfew, and it would pay (below). Any groups among
+! the bodies are opened first, then all the stars are closed as one
+! group. A group of three that is a stable hierarchy is frozen as two
+! Kepler orbits straight away.
+!
+! WHEN A GROUP PAYS. Taking nm stars out saves work only if the main
+! integration is big enough. There, each step of a close pair costs
+! about 2.5 n pair interactions (two force sums over the n bodies and
+! the prediction of all of them). In the few-body integrator a step
+! costs about 1.3 nm (nm-1) (two evaluations of every pair), and it
+! takes 2 to 4 times as many steps per orbit as the main integrator
+! (measured on binaries with eccentricity 0.9 to 0, at the standard
+! eta and etafew; it is also about 1000 times more accurate per orbit).
+! The costs are equal when
+!      n = (1.1 to 2.3) nm (nm-1)
+! so a group is only made if n >= nfewfac nm (nm-1), nfewfac = 2:
+!      stars in the group        3     4     5     6
+!      bodies needed            12    24    40    60
+! The break-even depends on the size of the group, not on a fixed
+! number of stars, and it is far below that of the neighbour scheme
+! (150), because the saving per step is n/nm^2, not n/neighbours.
+! Accuracy does not depend on n at all: it is set by gfew and etafew.
+! A stable triple is always worth it, whatever n is, because frozen as
+! Kepler orbits it costs nothing: so three stars that are a stable
+! hierarchy are taken out even if n is below the number above.
+!
+! >>> CHANGE HERE (nfewfac, above CONTAINS) once the break-even has
+!     been measured with the compiled code: benchmark/bench_kira.py
+!     --skip-kira --modes nofew direct
 !
    INTEGER, INTENT(IN) :: nb,bod(1:nb)
    INTEGER(KIND=8), INTENT(IN) :: t8
    DOUBLE PRECISION, INTENT(IN) :: tnow
    LOGICAL, INTENT(OUT) :: formed
-   INTEGER :: b,i,k,nm,nk,l,nl,list(1:kfmax),lk(1:kfmax)
+   INTEGER :: b,i,k,nm,nk,l,nl,list(1:kfmax),lk(1:kfmax),i1,i2,i3
    DOUBLE PRECISION :: xg(1:3,1:kfmax),ug(1:3,1:kfmax),xm(1:3,1:kfmax)
+   DOUBLE PRECISION :: um(1:3,1:kfmax),mm(1:kfmax)
    DOUBLE PRECISION :: mt,xc(1:3),vc(1:3),gsize,gam,tp2,dum(1:6)
+   DOUBLE PRECISION :: rel(1:6),rel2(1:6),qin,qout
+   LOGICAL :: stable
 !
    formed=.FALSE.
 ! the stars the group would have
@@ -1041,9 +1075,14 @@
      IF (nm + nk > kfmax) RETURN
      IF (k == 0) THEN
        xm(1:3,nm + 1)=r(1:3,i)
+       um(1:3,nm + 1)=v(1:3,i)
+       mm(nm + 1)=m(i)
      ELSE
        CALL grpcomp(k,r(1:3,i),v(1:3,i),tnow,nk,xg,ug)
+       IF (nm + nk > kfmax) RETURN
        xm(1:3,nm + 1:nm + nk)=xg(1:3,1:nk)
+       um(1:3,nm + 1:nm + nk)=ug(1:3,1:nk)
+       mm(nm + 1:nm + nk)=bmass(1:nk,k)
      END IF
      nm=nm + nk
      mt=mt + m(i)
@@ -1059,6 +1098,15 @@
    END DO
    CALL gperturb(xc,vc,mt,gsize,nb,bod,gam,tp2)
    IF (gam >= gfew) RETURN
+!
+! would it pay? Not if the main integration is too small - unless it
+! is a stable triple, which will cost nothing once it is frozen
+   IF (n < nfewfac*nm*(nm - 1)) THEN
+     IF (nm /= 3) RETURN
+     CALL hierarchy(mm(1:3),xm(1:3,1:3),um(1:3,1:3),stable,i1,i2,i3,rel,rel2,qin,qout)
+     IF (.NOT. stable) RETURN
+     IF (rcoll > 0.d0 .AND. qin < rcolli) RETURN
+   END IF
 !
 ! make it: open the groups, then close all the stars together
    nl=0
@@ -1077,6 +1125,8 @@
    dum=0.d0
    CALL closegroup(nl,list(1:nl),2,t8,tnow,dum,dum)
    formed=.TRUE.
+! a stable triple is frozen at once (the new group is the last one)
+   IF (nl == 3) CALL tryfreeze(nbin)
 !
    END SUBROUTINE tryfew
 ! =====================================================================

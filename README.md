@@ -253,7 +253,9 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   opened again when gamma > 10 `gfew`, which is what happens when a star is
   ejected. A group of three that passes the Mardling & Aarseth (2001) stability
   test is frozen as two nested Kepler orbits (no secular evolution, so no
-  Kozai-Lidov cycles).
+  Kozai-Lidov cycles). A group of k stars is only taken out if the main
+  integration has at least 2 k (k-1) bodies (12, 24, 40, 60 for k = 3 to 6),
+  below which it would not pay; a stable triple is taken out whatever N is.
 - **Stellar collisions and mergers** (`&collisions`): two stars that pass
   within `rcoll` (default 10 Rsun) have collided - checked from the
   closest-approach distance in the force loop plus the two-body pericentre, and

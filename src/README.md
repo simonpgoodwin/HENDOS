@@ -194,7 +194,8 @@ Closing and opening
 - `pairstate(i,j)` - function: 0 nothing, 1 the pair can be closed as a
   binary, 2 the pair will collide.
 - `tryfew(nb,bod,t8,tnow,formed)` - makes a few-body group of some bodies if
-  it would be isolated.
+  it would be isolated and there are enough bodies in the main integration
+  for it to pay (or it is a stable triple, which is frozen at once).
 - `tryfreeze(k)` - freezes a few-body group of three if it is a stable triple.
 - `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
   among the bodies that have just stepped.

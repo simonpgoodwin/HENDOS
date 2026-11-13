@@ -358,6 +358,23 @@ of three that settles into a stable hierarchical triple (an inner binary and
 a distant third star, by the Mardling & Aarseth 2001 criterion) is then
 treated as two exact Kepler orbits. It needs `closebinaries` to be on.
 
+A group is only taken out when that saves work, which depends on how many
+bodies the main calculation has compared with the size of the group: 12 for a
+group of three, 24 for four, 40 for five, 60 for six (twice the number of
+stars in the group times one less than that). Below those numbers the stars
+are simply left in the main calculation. The numbers are estimates: a step of
+a close pair in the main calculation costs about 2.5 N pair interactions and a
+step of a group of k stars about 1.3 k (k-1), and the group integrator takes 2
+to 4 times as many steps per orbit (it is also about 1000 times more accurate
+per orbit), so the two cost the same at N between 1.1 and 2.3 times k (k-1).
+There is no fixed N below which few-body groups are switched off altogether,
+and in particular nothing like the 150 of the neighbour scheme: the saving is
+N divided by the square of the group size, not N divided by the number of
+neighbours. Accuracy does not depend on N at all. A stable triple is taken
+out whatever N is, because once frozen it costs nothing. The factor is
+`nfewfac` in `src/nbbin.f90`, to be changed when it has been measured with the
+compiled code.
+
 ### `gfew` (standard value 1.0e-5)
 A few-body group is taken out if its perturbation gamma by the rest of the
 cluster (see `gclose`) is less than `gfew`, and put back if it rises above
