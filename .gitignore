@@ -1,6 +1,7 @@
 # built by make in run/
 run/build/
 run/hermite
+run/hermite_c
 run/makeics
 *.o
 *.mod
