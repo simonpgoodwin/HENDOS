@@ -96,6 +96,7 @@
     INTEGER(KIND=8) :: nfewsteps=0   ! steps of the few-body integrator
     INTEGER(KIND=8) :: nmerged=0     ! stellar mergers so far
     DOUBLE PRECISION :: emerged=0.d0 ! orbital energy removed by mergers (internal units)
+    DOUBLE PRECISION :: efrozen=0.d0 ! energy change of the triples unfrozen so far
     INTEGER :: nalloc                ! size of the particle arrays (stars at the start)
     INTEGER(KIND=8) :: tcur8=0       ! integer time of the block being done
     LOGICAL :: aclast=.TRUE.         ! this is the last corrector iteration
@@ -143,12 +144,14 @@
 !   brel2   mode 3: r, v of star 3 relative to the c.o.m. of stars 1, 2
 !   bx, bv  mode 2: r, v of each star relative to the group c.o.m.
 !   bepoch  internal time the stored state is for
+!   bein    mode 3: true internal energy of the triple when it was frozen
+!           (it is counted at this energy while frozen - see diagnose)
     INTEGER, PARAMETER :: kfmax=6            ! most stars in a group
     DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:) :: bmass,brel,brel2
     DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:,:) :: bx,bv
     INTEGER, ALLOCATABLE, DIMENSION(:,:) :: bident,btype
     INTEGER, ALLOCATABLE, DIMENSION(:) :: bnum,bmode
-    DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:) :: bepoch
+    DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:) :: bepoch,bein
 ! Ahmad-Cohen neighbour scheme (see module nbac)
 !   fi, fid   irregular force (neighbours + tide) and its derivative
 !   fr, frd   regular force (everything else) and derivative at time treg

@@ -6,6 +6,7 @@ The Sheffield group's N-body code for stellar dynamics (named after
 Henderson's Relish). This file is the overview; the other READMEs are
 
 - `src/README.md` - what every routine does and which file it is in
+- `csrc/CSRC_README.md` - the C version of the main code, for comparison
 - `src/ics/ICS_README.md` - how to change the way initial conditions are made
 - `src/ics/FRACTAL_README.md` - how the fractal generator works
 - `run/PARAMS_README.md` - a full description of every parameter
@@ -32,6 +33,9 @@ HENDOS/
       icrandom.f90       random numbers (ran3, gasdev)
       ICS_README.md      how to change the generator
       FRACTAL_README.md  how the fractals are made
+  csrc/                  a C version of the main code (hermite_c), for comparison
+    CSRC_README.md       what is in it and how it differs from the Fortran
+    main.c, *.c, hendos.h  same algorithms, same files in and out (no tree)
   run/                   where the code is built and run
     Makefile             builds the executables into this directory
     params.nml           parameter file for hermite
@@ -306,8 +310,18 @@ Still serial, because they are cheap or rare: the binary and collision
 bookkeeping between blocks, the few-body integrator (a handful of stars),
 output and the in-run analysis.
 
+## The C version
+`csrc/` holds a C version of the main code, so the Fortran can be checked
+against it: `make hermite_c` in `run/`, then use `./hermite_c` exactly like
+`./hermite`. It reads the same parameter and initial conditions files and
+writes the same output, so `makeics`, the analysis tools, the tests and the
+benchmark all work with it. It has everything except the Barnes-Hut tree.
+Running it found four bugs in the shared algorithms, now fixed in both
+versions (see `csrc/CSRC_README.md`). The worst was in the Kepler solver for
+closed binaries.
+
 ## Testing
-`tests/run_tests.py` runs `hermite` on 15 small problems with known answers
+`tests/run_tests.py` runs `hermite` (or `hermite_c`, with `--hermite`) on 17 small problems with known answers
 (two-body orbits, the Pythagorean problem, a frozen triple, a Plummer sphere
 by direct sums, neighbour scheme, tree and with a tide, a merger, restarts,
 header flexibility) and checks each against a tolerance. Run it after every
@@ -315,7 +329,11 @@ change. See `tests/README.md`.
 
 ## Status
 Developed without a Fortran compiler: **none of the Fortran has been compiled
-or run.** The algorithms were checked with Python models before or while the
+or run.** The C version in `csrc/`, which follows the Fortran routine by
+routine, *has* been compiled and run. It passes every regression test except
+the tree test (there is no tree in C), also under the address and
+undefined-behaviour sanitisers. So the algorithms are tested, but the Fortran
+translation of them is not yet. The algorithms were checked with Python models before or while the
 Fortran was written (Hermite + block steps, tide, binaries, tree and its
 parallel build, the neighbour scheme, the few-body integrator), and the
 Fortran was checked for block structure. Not covered by any Python model, and
@@ -332,7 +350,12 @@ Known limits of the new parts:
   drifts in energy (about 3e-9 of its binding energy per orbit at
   `etafew` = 0.02);
 - only triples are frozen; stable quadruples (2+2, 3+1) stay integrated;
-- frozen triples have no secular evolution;
+- frozen triples have no secular evolution; the small change in a triple's
+  energy while it is frozen is booked in `energy_change_frozen_triples`;
+- there is no regularisation: perturbed hard binaries are integrated directly
+  in the main code. In clusters rich in hard binaries the default `eta` = 0.02
+  can give energy errors of 1e-2 or worse, while `eta` = 0.01 gave 1e-4 in the
+  same tests;
 - mergers conserve mass and momentum, with no mass loss, kick or change of
   radius - stellar evolution will supply those;
 - in the neighbour scheme the predictor's higher-order terms are not corrected

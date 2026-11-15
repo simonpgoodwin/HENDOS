@@ -3,6 +3,8 @@
 Each file is one Fortran module that does one job. The main program
 (`hermite.f90`) only contains the integration loop; everything else is in the
 modules. `(internal)` marks a routine contained inside the one above it.
+A C version with the same routine names (except the tree) is in `../csrc`
+(see `csrc/CSRC_README.md`), so this guide covers both.
 
 **Keep this file up to date: when a routine is added, moved, renamed or changes
 what it does, change its entry here in the same edit.**
@@ -161,7 +163,11 @@ The scheme is explained at the top of the file.
 How groups are closed, opened and frozen is explained at the top of the file.
 
 Kepler orbits and groups
+- `grpeint(nm,mm,xm,um)` - function: internal energy of a few stars (used for
+  the energy bookkeeping of frozen triples).
 - `kepler(mu,r0,v0,dt,r1,v1)` - advances a bound two-body orbit by `dt` exactly.
+  (Kepler's equation is solved by safeguarded Newton iteration in a bracket of
+  ±2 about the mean-anomaly change, which always holds the root.)
 - `bincomp(k,...)` - positions and velocities of the two stars of binary `k`.
 - `grpcomp(k,xc,vc,tnow,nm,xm,um)` - positions and velocities of the stars
   of any group `k` now (binary, few-body group or frozen triple).
@@ -180,7 +186,6 @@ Collisions and mergers
 - `mergestars(i,j,t8,tnow)` - merges two single stars into one.
 - `collcheck(t8,tnow)` - after each block, tests active bodies that came close
   to another for a collision (within `rcoll`) and merges them or stops.
-- `paircollide(i,j,t8,tnow)` - a bound pair whose orbit touches: merge or stop.
 
 Finding neighbours and perturbations
 - `gperturb(...)` - the perturbation gamma on a group from all other bodies.
@@ -194,11 +199,14 @@ Closing and opening
 - `closegroup(nm,list,mode,...)` - replaces `nm` stars by one c.o.m. body.
 - `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars.
 - `pairstate(i,j)` - function: 0 nothing, 1 the pair can be closed as a
-  binary, 2 the pair will collide.
+  binary. (A pair whose pericentre is inside `rcoll` is never closed; it is
+  merged by `collcheck` when the stars meet.)
 - `tryfew(nb,bod,t8,tnow,formed)` - makes a few-body group of some bodies if
   it would be isolated and there are enough bodies in the main integration
   for it to pay (or it is a stable triple, which is frozen at once).
-- `tryfreeze(k)` - freezes a few-body group of three if it is a stable triple.
+- `tryfreeze(k)` - freezes a few-body group of three if it is a stable triple,
+  and records its true internal energy then (`bein`). `opengroup` adds the
+  change in that energy to `efrozen` when the triple is unfrozen.
 - `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
   among the bodies that have just stepped.
 - `binstart(tnow)` - closes binaries, merges touching pairs and makes

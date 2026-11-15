@@ -672,6 +672,7 @@
    ALLOCATE(brel(1:6,1:n/2+1))
    ALLOCATE(brel2(1:6,1:n/2+1))
    ALLOCATE(bepoch(1:n/2+1))
+   ALLOCATE(bein(1:n/2+1))
    IF (fewbody) THEN
      ALLOCATE(bx(1:3,1:kfmax,1:n/2+1))
      ALLOCATE(bv(1:3,1:kfmax,1:n/2+1))

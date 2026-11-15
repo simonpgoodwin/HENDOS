@@ -1,0 +1,981 @@
+/* ==============================================================
+ * HENDOS (C version) - groups.c
+ * BINARIES, FEW-BODY GROUPS, COLLISIONS AND MERGERS.
+ * The counterpart of nbbin.f90, where all of this is explained: a
+ * compact set of stars that is unperturbed by the rest of the cluster
+ * is replaced by one centre-of-mass (c.o.m.) body and its internal
+ * motion followed separately. Three kinds of group (bmode):
+ *   1  binary          exact Kepler orbit
+ *   2  few-body group  3 to KFMAX stars, integrated by fewint (few.c)
+ *   3  stable triple   two nested Kepler orbits
+ * gamma = 2 s^3 / mb * sum_k m_k / d_k^3 is the perturbation of a
+ * group of mass mb and size s by the other bodies.
+ * Bodies are kept in slots 0..n-1; a group index is 0..nbin-1 and
+ * ib[i] = -1 means body i is a single star.
+ * ============================================================== */
+#include <omp.h>
+#include "hendos.h"
+
+#define NFEWFAC 2    /* a group of nm stars needs NFEWFAC*nm*(nm-1) bodies to pay */
+
+static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list);
+static int bmode_last_open = 0;
+
+
+/* ---- debugging: total energy at integer time t8 from the predicted
+ * positions (valid between the steps of a block, when every body is
+ * at t8). Used only when the environment variable HENDOS_DEBUG is set,
+ * to check that no group event changes the energy. */
+static int dbgon = -1;
+double dbgenergy(double tnow)
+{
+    double ke = 0.0, pe = 0.0;
+#pragma omp parallel for reduction(+:ke,pe) schedule(dynamic, 16)
+    for (int i = 0; i < n; i++) {
+        ke += 0.5 * m[i] * dot3(vp[i], vp[i]);
+        for (int j = i + 1; j < n; j++) {
+            double d[3] = {rp[i][0] - rp[j][0], rp[i][1] - rp[j][1], rp[i][2] - rp[j][2]};
+            pe -= m[i] * m[j] / sqrt(dot3(d, d) + eps2);
+        }
+    }
+    for (int i = 0; i < n; i++) {
+        int k = ib[i], nm;
+        vec3 xm[KFMAX], um[KFMAX];
+        if (k < 0) continue;
+        grpcomp(k, rp[i], vp[i], tnow, &nm, xm, um);
+        for (int l = 0; l < nm; l++) {
+            double u[3] = {um[l][0] - vp[i][0], um[l][1] - vp[i][1], um[l][2] - vp[i][2]};
+            ke += 0.5 * bmass[k][l] * dot3(u, u);
+            for (int l2 = l + 1; l2 < nm; l2++) {
+                double d[3] = {xm[l][0] - xm[l2][0], xm[l][1] - xm[l2][1], xm[l][2] - xm[l2][2]};
+                pe -= bmass[k][l] * bmass[k][l2] / norm3(d);
+            }
+        }
+    }
+    return ke + pe + emerged;
+}
+static double dbge1;
+static void dbgbefore(double tnow)
+{
+    if (dbgon < 0) dbgon = getenv("HENDOS_DEBUG") != NULL;
+    if (dbgon) dbge1 = dbgenergy(tnow);
+}
+static void dbgafter(const char *what, double tnow)
+{
+    if (!dbgon) return;
+    double e2 = dbgenergy(tnow);
+    printf("  DEBUG t = %.6f Myr %-10s dE/|E| = %10.3E  (groups %d)\n", tnow * tunit, what,
+           (e2 - dbge1) / fabs(dbge1), nbin);
+}
+
+/* internal energy (kinetic about the c.o.m. + mutual potential) of nm
+ * stars of masses mm at positions xm, velocities um */
+double grpeint(int nm, const double *mm, vec3 xm[KFMAX], vec3 um[KFMAX])
+{
+    double mt = 0.0, vcm[3] = {0, 0, 0}, e = 0.0;
+    for (int l = 0; l < nm; l++) {
+        mt += mm[l];
+        for (int c = 0; c < 3; c++) vcm[c] += mm[l] * um[l][c];
+    }
+    for (int c = 0; c < 3; c++) vcm[c] /= mt;
+    for (int l = 0; l < nm; l++) {
+        double u[3] = {um[l][0] - vcm[0], um[l][1] - vcm[1], um[l][2] - vcm[2]};
+        e += 0.5 * mm[l] * dot3(u, u);
+        for (int l2 = l + 1; l2 < nm; l2++) {
+            double d[3] = {xm[l][0] - xm[l2][0], xm[l][1] - xm[l2][1], xm[l][2] - xm[l2][2]};
+            e -= mm[l] * mm[l2] / norm3(d);
+        }
+    }
+    return e;
+}
+
+/* advance a bound two-body relative orbit (G(m1+m2) = mu) by dt with
+ * the f and g functions and the eccentric anomaly difference (Danby
+ * 1988). Exact; dt is reduced modulo the period. */
+void kepler(double mu, const double r0[3], const double v0[3], double dt, double r1[3],
+            double v1[3])
+{
+    const double twopi = 6.283185307179586;
+    double r0n = norm3(r0);
+    double alpha = 2.0 / r0n - dot3(v0, v0) / mu;          /* 1/a */
+    double a = 1.0 / alpha, nmo = sqrt(mu * alpha * alpha * alpha);
+    double sig0 = dot3(r0, v0) / sqrt(mu);
+    double c1 = 1.0 - r0n / a, c2 = sig0 / sqrt(a);
+    double dm = fmod(nmo * dt, twopi);
+    if (dm < 0.0) dm += twopi;
+    double dtr = dm / nmo;
+    /* Kepler's equation in difference form, dm = x - c1 sin x + c2 (1 - cos x).
+     * x - dm = e (sin(x + E0) - sin E0), so the root is within 2e < 2 of dm;
+     * Newton's method kept inside the bracket */
+    double lo = dm - 2.0, hi = dm + 2.0, x = dm;
+    for (int it = 0; it < 100; it++) {
+        double ff = x - c1 * sin(x) + c2 * (1.0 - cos(x)) - dm;
+        double fp = 1.0 - c1 * cos(x) + c2 * sin(x);
+        if (ff > 0.0) hi = x; else lo = x;
+        double xn = x - ff / fp;
+        if (xn <= lo || xn >= hi) xn = 0.5 * (lo + hi);
+        if (fabs(xn - x) < 1.e-15) { x = xn; break; }
+        x = xn;
+    }
+    double ce = cos(x), se = sin(x);
+    double f = 1.0 - a / r0n * (1.0 - ce), g = dtr + (se - x) / nmo;
+    for (int k = 0; k < 3; k++) r1[k] = f * r0[k] + g * v0[k];
+    double r1n = norm3(r1);
+    double fd = -sqrt(mu * a) * se / (r1n * r0n), gd = 1.0 - a / r1n * (1.0 - ce);
+    for (int k = 0; k < 3; k++) v1[k] = fd * r0[k] + gd * v0[k];
+}
+
+/* specific orbital energy and apocentre of a relative orbit (the
+ * apocentre is huge if unbound) */
+static void pairorbit(double mb, const double rr[3], const double vr[3], double *ebind,
+                      double *rapo)
+{
+    double rn = norm3(rr), h[3];
+    *ebind = 0.5 * dot3(vr, vr) - mb / rn;
+    if (*ebind >= 0.0) {
+        *rapo = HUGE_VAL;
+        return;
+    }
+    double a = -0.5 * mb / *ebind;
+    h[0] = rr[1] * vr[2] - rr[2] * vr[1];
+    h[1] = rr[2] * vr[0] - rr[0] * vr[2];
+    h[2] = rr[0] * vr[1] - rr[1] * vr[0];
+    double ecc2 = fmax(0.0, 1.0 - dot3(h, h) / (mb * a));
+    *rapo = a * (1.0 + sqrt(ecc2));
+}
+
+/* two-body pericentre distance of a relative orbit, q = h^2/(mb (1+e)) */
+static double pericentre(double mb, const double rr[3], const double vr[3])
+{
+    double h[3];
+    h[0] = rr[1] * vr[2] - rr[2] * vr[1];
+    h[1] = rr[2] * vr[0] - rr[0] * vr[2];
+    h[2] = rr[0] * vr[1] - rr[1] * vr[0];
+    double h2 = dot3(h, h), ebind = 0.5 * dot3(vr, vr) - mb / norm3(rr);
+    double ecc = sqrt(fmax(0.0, 1.0 + 2.0 * ebind * h2 / (mb * mb)));
+    return h2 / (mb * (1.0 + ecc));
+}
+
+/* type of the star made by merging types t1 and t2: the more compact
+ * wins. >>> CHANGE HERE for different rules */
+static int mergetype(int t1, int t2)
+{
+    if (t1 == TBHOLE || t2 == TBHOLE) return TBHOLE;
+    if (t1 == TNSTAR || t2 == TNSTAR) return TNSTAR;
+    if (t1 == TWDWARF || t2 == TWDWARF) return TWDWARF;
+    if (t1 == TSTAR || t2 == TSTAR) return TSTAR;
+    return t1 > t2 ? t1 : t2;
+}
+
+/* announce a merger on the screen and add a line to <runid>_mergers.dat */
+static void mergelog(double tnow, int id1, double m1, int t1, int id2, double m2, int t2,
+                     int idn, double mn, int tn, const double xn[3], const double vn[3],
+                     double rsep)
+{
+    char fname[2 * NSTR];
+    double rsun = 6.957e8 / 3.0856775814913673e16;
+    printf("  ** MERGER t = %.6f Myr: stars %d and %d (%.4f and %.4f Msun) are now star %d, "
+           "%.4f Msun, type %s\n", tnow * tunit, id1, id2, m1, m2, idn, mn, typename_[tn]);
+    snprintf(fname, sizeof fname, "%s%s_mergers.dat", datadir, runid);
+    FILE *f = fopen(fname, "r");
+    int exists = (f != NULL);
+    if (f) fclose(f);
+    f = fopen(fname, "a");
+    if (!f) return;
+    if (!exists) {
+        fprintf(f, "# format                        = NBODY-MERGERS 1\n");
+        fprintf(f, "# runid                         = %s\n", runid);
+        fprintf(f, "# units                         = mass Msun, length pc, velocity km/s, "
+                   "time Myr\n");
+        fprintf(f, "# columns                       = time id1 m1 type1 id2 m2 type2 id m "
+                   "type x y z vx vy vz separation\n");
+        fprintf(f, "# column_units                  = Myr - Msun - - Msun - - Msun - pc pc pc "
+                   "km/s km/s km/s Rsun\n");
+        fprintf(f, "# column_notes                  = stars id1 and id2 merged to make star "
+                   "id (the id of the more massive); x..vz are the new star\n");
+        fprintf(f, "# end_header\n");
+    }
+    fprintf(f, "%24.16E%10d%24.16E %-12s%10d%24.16E %-12s%10d%24.16E %-12s", tnow * tunit, id1,
+            m1, typename_[t1], id2, m2, typename_[t2], idn, mn, typename_[tn]);
+    for (int k = 0; k < 3; k++) fprintf(f, "%24.16E", xn[k]);
+    for (int k = 0; k < 3; k++) fprintf(f, "%24.16E", vn[k] * vunit);
+    fprintf(f, "%16.8E\n", rsep / rsun);
+    fclose(f);
+}
+
+/* bring the integration of few-body group k up to internal time tnow
+ * (xc, vcm: its c.o.m., only used to report a merger). Stars of the
+ * group that collide on the way are merged inside it (or the run is
+ * stopped if mergers are off). */
+static void fewadvance(int k, const double xc[3], const double vcm[3], double tnow)
+{
+    static int warned = 0;
+    double rc2 = rcoll > 0.0 ? rcolli * rcolli : 0.0;
+    for (;;) {
+        double trem = tnow - bepoch[k], tdone;
+        int nm = bnum[k], ic, jc;
+        int64_t nst;
+        if (trem <= 0.0 || nm < 2) break;
+        fewint(nm, bmass[k], bx[k], bv[k], trem, etafew, eps2, rc2, &tdone, &ic, &jc, &nst);
+        nfewsteps += nst;
+        if (ic == -1) {
+            bepoch[k] = tnow;
+            break;
+        }
+        bepoch[k] += tdone;
+        if (ic == -2) {
+            if (!warned)
+                printf("  ** NOTE t = %.4f Myr: a few-body group needs more than 2e7 steps "
+                       "in one go\n", tnow * tunit);
+            warned = 1;
+            continue;
+        }
+        /* stars ic and jc of the group have collided */
+        double m1 = bmass[k][ic], m2 = bmass[k][jc], mn = m1 + m2, rr[3], vr[3], xn[3], vn[3];
+        double xa[3], va[3];
+        for (int c = 0; c < 3; c++) {
+            rr[c] = bx[k][ic][c] - bx[k][jc][c];
+            vr[c] = bv[k][ic][c] - bv[k][jc][c];
+            xn[c] = (m1 * bx[k][ic][c] + m2 * bx[k][jc][c]) / mn;
+            vn[c] = (m1 * bv[k][ic][c] + m2 * bv[k][jc][c]) / mn;
+            xa[c] = xc[c] + xn[c];
+            va[c] = vcm[c] + vn[c];
+        }
+        double rsep = norm3(rr);
+        if (!mergers) {
+            printf("\n******************************************************************************\n");
+            printf("  STELLAR COLLISION at t = %.6f Myr (inside a few-body group)\n",
+                   bepoch[k] * tunit);
+            printf("  star ids %12d%12d   masses %12.5f%12.5f Msun\n", bident[k][ic],
+                   bident[k][jc], m1, m2);
+            printf("  The run has been stopped: mergers are switched off.\n");
+            printf("******************************************************************************\n");
+            exit(1);
+        }
+        emerged += 0.5 * m1 * m2 / mn * dot3(vr, vr) - m1 * m2 / sqrt(rsep * rsep + eps2);
+        int idn = m2 > m1 ? bident[k][jc] : bident[k][ic];
+        int tn = mergetype(btype[k][ic], btype[k][jc]);
+        mergelog(bepoch[k], bident[k][ic], m1, btype[k][ic], bident[k][jc], m2, btype[k][jc],
+                 idn, mn, tn, xa, va, rsep);
+        /* the merged star takes slot ic (ic < jc); the last star moves into jc */
+        bmass[k][ic] = mn;
+        bident[k][ic] = idn;
+        btype[k][ic] = tn;
+        memcpy(bx[k][ic], xn, sizeof(vec3));
+        memcpy(bv[k][ic], vn, sizeof(vec3));
+        if (jc != nm - 1) {
+            bmass[k][jc] = bmass[k][nm - 1];
+            bident[k][jc] = bident[k][nm - 1];
+            btype[k][jc] = btype[k][nm - 1];
+            memcpy(bx[k][jc], bx[k][nm - 1], sizeof(vec3));
+            memcpy(bv[k][jc], bv[k][nm - 1], sizeof(vec3));
+        }
+        bnum[k] = nm - 1;
+        ntot--;
+        nmerged++;
+    }
+}
+
+/* positions xm and velocities um of the nm stars of group k at internal
+ * time tnow, given its c.o.m. position xc and velocity vcm. For a
+ * few-body group this brings its own integration up to tnow. */
+void grpcomp(int k, const double xc[3], const double vcm[3], double tnow, int *nm,
+             vec3 xm[KFMAX], vec3 um[KFMAX])
+{
+    double rr[3], vr[3], ro[3], vo[3];
+    memset(xm, 0, sizeof(vec3) * KFMAX);
+    memset(um, 0, sizeof(vec3) * KFMAX);
+    if (bmode[k] == 1) {
+        double mb = bmass[k][0] + bmass[k][1];
+        kepler(mb, brel[k], brel[k] + 3, tnow - bepoch[k], rr, vr);
+        for (int c = 0; c < 3; c++) {
+            xm[0][c] = xc[c] + bmass[k][1] / mb * rr[c];
+            um[0][c] = vcm[c] + bmass[k][1] / mb * vr[c];
+            xm[1][c] = xc[c] - bmass[k][0] / mb * rr[c];
+            um[1][c] = vcm[c] - bmass[k][0] / mb * vr[c];
+        }
+    } else if (bmode[k] == 3) {
+        /* inner orbit (stars 0, 1) and outer orbit (star 2 about their c.o.m.) */
+        double mb = bmass[k][0] + bmass[k][1], mt = mb + bmass[k][2];
+        kepler(mb, brel[k], brel[k] + 3, tnow - bepoch[k], rr, vr);
+        kepler(mt, brel2[k], brel2[k] + 3, tnow - bepoch[k], ro, vo);
+        for (int c = 0; c < 3; c++) {
+            double xi = xc[c] - bmass[k][2] / mt * ro[c], vi = vcm[c] - bmass[k][2] / mt * vo[c];
+            xm[0][c] = xi + bmass[k][1] / mb * rr[c];
+            um[0][c] = vi + bmass[k][1] / mb * vr[c];
+            xm[1][c] = xi - bmass[k][0] / mb * rr[c];
+            um[1][c] = vi - bmass[k][0] / mb * vr[c];
+            xm[2][c] = xc[c] + mb / mt * ro[c];
+            um[2][c] = vcm[c] + mb / mt * vo[c];
+        }
+    } else {
+        fewadvance(k, xc, vcm, tnow);
+        for (int l = 0; l < bnum[k]; l++)
+            for (int c = 0; c < 3; c++) {
+                xm[l][c] = xc[c] + bx[k][l][c];
+                um[l][c] = vcm[c] + bv[k][l][c];
+            }
+    }
+    *nm = bnum[k];
+}
+
+/* two stars have come within rcoll and mergers are off: stop the run */
+static void collision(int i, int j, double rsep, double q, double tnow)
+{
+    double rsun = 6.957e8 / 3.0856775814913673e16;
+    int two[2] = {i, j};
+    printf("\n******************************************************************************\n");
+    printf("  STELLAR COLLISION at t = %.6f Myr\n", tnow * tunit);
+    printf("******************************************************************************\n");
+    for (int c = 0; c < 2; c++) {
+        int l = two[c];
+        if (ib[l] < 0)
+            printf("  star  id %12d   mass %12.5f Msun   type %s\n", id[l], m[l],
+                   typename_[itype[l]]);
+        else
+            printf("  group ids %12d%12d ...   mass %12.5f Msun\n", bident[ib[l]][0],
+                   bident[ib[l]][1], m[l]);
+    }
+    printf("  separation now          %12.4E Rsun\n", rsep / rsun);
+    printf("  two-body pericentre     %12.4E Rsun\n", q / rsun);
+    printf("  collision radius rcoll  %12.4E Rsun\n", rcoll);
+    printf("  position                %14.6f%14.6f%14.6f pc\n", rp[i][0], rp[i][1], rp[i][2]);
+    printf("  The run has been stopped: mergers are switched off.\n");
+    printf("******************************************************************************\n");
+    exit(1);
+}
+
+/* perturbation gamma on a (possible) group of mass mb and size gsize
+ * at xc from all bodies except the nex in ex, and the squared shortest
+ * pairwise free-fall/flyby time of its c.o.m. Uses rp, vp. */
+static void gperturb(const double xc[3], const double vcm[3], double mb, double gsize, int nex,
+                     const int *ex, double *gam, double *tp2)
+{
+    double sum3 = 0.0, t2 = HUGE_VAL;
+#pragma omp parallel for reduction(+:sum3) reduction(min:t2) schedule(static) if (n >= nompj)
+    for (int j = 0; j < n; j++) {
+        int skip = 0;
+        for (int e = 0; e < nex; e++)
+            if (ex[e] == j) skip = 1;
+        if (skip) continue;
+        double dx = rp[j][0] - xc[0], dy = rp[j][1] - xc[1], dz = rp[j][2] - xc[2];
+        double d2 = dx * dx + dy * dy + dz * dz;
+        double dv2 = (vp[j][0] - vcm[0]) * (vp[j][0] - vcm[0])
+                     + (vp[j][1] - vcm[1]) * (vp[j][1] - vcm[1])
+                     + (vp[j][2] - vcm[2]) * (vp[j][2] - vcm[2]);
+        double d3 = d2 * sqrt(d2);
+        sum3 += m[j] / d3;
+        double tff = d3 / (mb + m[j]), tfl = d2 / (dv2 + 1e-300);
+        if (tff < t2) t2 = tff;
+        if (tfl < t2) t2 = tfl;
+    }
+    *gam = 2.0 * gsize * gsize * gsize / mb * sum3;
+    *tp2 = t2;
+}
+
+/* the body nearest to body i, not counting body jex (-1: any body);
+ * -1 if there is none */
+static int nearestx(int i, int jex)
+{
+    int jn = -1;
+    double gbest = HUGE_VAL;
+#pragma omp parallel if (n >= nompj)
+    {
+        int jbest = -1;
+        double dbest = HUGE_VAL;
+#pragma omp for schedule(static) nowait
+        for (int j = 0; j < n; j++) {
+            if (j == i || j == jex) continue;
+            double dx = rp[j][0] - rp[i][0], dy = rp[j][1] - rp[i][1], dz = rp[j][2] - rp[i][2];
+            double d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < dbest) {
+                dbest = d2;
+                jbest = j;
+            }
+        }
+#pragma omp critical(nearestcrit)
+        if (jbest >= 0 && (dbest < gbest || (dbest == gbest && jbest < jn))) {
+            gbest = dbest;
+            jn = jbest;
+        }
+    }
+    return jn;
+}
+
+/* copy body src into slot dst */
+static void moverow(int src, int dst)
+{
+#define CPV(a) memcpy(a[dst], a[src], sizeof(vec3))
+    CPV(r); CPV(v); CPV(rp); CPV(vp); CPV(f0); CPV(f1); CPV(f2); CPV(f3); CPV(f2e); CPV(f3e);
+#undef CPV
+    m[dst] = m[src];
+    id[dst] = id[src];
+    itype[dst] = itype[src];
+    ib[dst] = ib[src];
+    lev[dst] = lev[src];
+    tk[dst] = tk[src];
+    dtk[dst] = dtk[src];
+    tpair2[dst] = tpair2[src];
+    rmin2[dst] = rmin2[src];
+    phi[dst] = phi[src];
+    if (useac) acmoverow(src, dst);
+}
+
+/* start off the nl new bodies in list at integer time t8: forces from
+ * all other bodies (whose rp, vp are at t8), then the first level of
+ * each, which is at least levmin and divides t8 */
+static void startbody(int nl, const int *list, int64_t t8, int levmin)
+{
+    tcur8 = t8;
+    aclast = 1;
+    nact = nl;
+    for (int ia = 0; ia < nl; ia++) ilist[ia] = list[ia];
+    forces();
+    for (int ia = 0; ia < nl; ia++) {
+        int l = list[ia];
+        for (int k = 0; k < 3; k++) {
+            f0[l][k] = f0p[l][k];
+            f1[l][k] = f1p[l][k];
+            f2[l][k] = f3[l][k] = f2e[l][k] = f3e[l][k] = 0.0;
+        }
+        tk[l] = t8;
+        double amod = norm3(f0[l]), jmod = norm3(f1[l]);
+        double dtw = etap * sqrt(tpair2[l]);
+        if (amod > 0.0 && jmod > 0.0) dtw = fmin(dtw, etas * amod / jmod);
+        int knew = getlevel(dtw);
+        lev[l] = commlev(knew > levmin ? knew : levmin, t8);
+        dtk[l] = (int64_t)1 << (kmax - lev[l]);
+        if (useac) acstart(l);
+    }
+}
+
+/* merge single stars i and j into one star at their centre of mass
+ * (their predicted positions rp, vp are used, which for the active
+ * star are its new position). Mass and momentum are conserved; the
+ * star keeps the id of the more massive. The orbital energy of the
+ * pair is added to emerged. */
+static void mergestars(int i, int j, int64_t t8, double tnow)
+{
+    double mi = m[i], mj = m[j], mn = mi + mj, rr[3], vr[3], xc[3], vcm[3];
+    for (int k = 0; k < 3; k++) {
+        rr[k] = rp[i][k] - rp[j][k];
+        vr[k] = vp[i][k] - vp[j][k];
+        xc[k] = (mi * rp[i][k] + mj * rp[j][k]) / mn;
+        vcm[k] = (mi * vp[i][k] + mj * vp[j][k]) / mn;
+    }
+    double rsep = norm3(rr);
+    emerged += 0.5 * mi * mj / mn * dot3(vr, vr) - mi * mj / sqrt(rsep * rsep + eps2);
+    int idn = mj > mi ? id[j] : id[i];
+    int tn = mergetype(itype[i], itype[j]);
+    mergelog(tnow, id[i], mi, itype[i], id[j], mj, itype[j], idn, mn, tn, xc, vcm, rsep);
+
+    int lo = i < j ? i : j, hi = i < j ? j : i;
+    for (int k = 0; k < 3; k++) {
+        r[lo][k] = rp[lo][k] = xc[k];
+        v[lo][k] = vp[lo][k] = vcm[k];
+    }
+    m[lo] = mn;
+    id[lo] = idn;
+    itype[lo] = tn;
+    ib[lo] = -1;
+    tk[lo] = t8;
+    /* remove slot hi by moving the last body into it */
+    if (useac) {
+        acremoved(hi, lo);
+        acok[lo] = 0;
+    }
+    if (hi != n - 1) {
+        moverow(n - 1, hi);
+        if (useac) acmoved(n - 1, hi);
+    }
+    n--;
+    ntot--;
+    nmerged++;
+    startbody(1, &lo, t8, 0);
+}
+
+/* after each block: for each active body that came within 2 rcoll of
+ * another, find that neighbour and test the pair: a collision if they
+ * are within rcoll, or approaching with a two-body pericentre inside
+ * rcoll. The stars are then merged, or the run stopped if mergers are
+ * off. If one of the two is a group it is opened instead. At most one
+ * merger per block. */
+void collcheck(int64_t t8, double tnow)
+{
+    int nact0 = nact, nm, list[KFMAX];
+    int *alist = xalloc(sizeof(int) * (size_t)(nact0 > 0 ? nact0 : 1));
+    memcpy(alist, ilist, sizeof(int) * (size_t)nact0);
+    for (int ia = 0; ia < nact0; ia++) {
+        int i = alist[ia];
+        if (i >= n) continue;
+        if (rmin2[i] >= 4.0 * rcolli * rcolli) continue;
+        int j = nearestx(i, -1);
+        if (j < 0) continue;
+        double rr[3], vr[3];
+        for (int k = 0; k < 3; k++) {
+            rr[k] = rp[i][k] - rp[j][k];
+            vr[k] = vp[i][k] - vp[j][k];
+        }
+        double rsep = norm3(rr), q = pericentre(m[i] + m[j], rr, vr);
+        if (rsep < rcolli || (q < rcolli && dot3(rr, vr) < 0.0)) {
+            if (!mergers) collision(i, j, rsep, q, tnow);
+            if (ib[i] >= 0) {
+                if (tk[i] == t8) opengroup(i, t8, tnow, &nm, list);
+            } else if (ib[j] >= 0) {
+                if (tk[j] == t8) opengroup(j, t8, tnow, &nm, list);
+            } else {
+                mergestars(i, j, t8, tnow);
+            }
+            break;
+        }
+    }
+    free(alist);
+}
+
+/* if group k (few-body, three stars, up to date) is a stable hierarchy
+ * whose inner binary does not touch, freeze it as two nested Kepler
+ * orbits (mode 3), with its stars in the order inner, inner, outer */
+static void tryfreeze(int k)
+{
+    int stable, i1, i2, i3;
+    double rel[6], rel2[6], qin, qout;
+    hierarchy(bmass[k], bx[k], bv[k], &stable, &i1, &i2, &i3, rel, rel2, &qin, &qout);
+    if (!stable) return;
+    if (rcoll > 0.0 && qin < rcolli) return;
+    /* its true internal energy now, at which it is counted while frozen
+     * (see diagnose in io.c) - before the stars are put in a new order */
+    bein[k] = grpeint(3, bmass[k], bx[k], bv[k]);
+    int idx[3] = {i1, i2, i3}, ti[3], tt[3];
+    double tm[3];
+    for (int c = 0; c < 3; c++) {
+        tm[c] = bmass[k][idx[c]];
+        ti[c] = bident[k][idx[c]];
+        tt[c] = btype[k][idx[c]];
+    }
+    for (int c = 0; c < 3; c++) {
+        bmass[k][c] = tm[c];
+        bident[k][c] = ti[c];
+        btype[k][c] = tt[c];
+    }
+    memcpy(brel[k], rel, sizeof rel);
+    memcpy(brel2[k], rel2, sizeof rel2);
+    bmode[k] = 3;
+    nfrozen++;
+}
+
+/* replace the nm single stars in list (all at integer time t8 =
+ * internal time tnow) by one c.o.m. body, as a group of kind mode
+ * (1 binary, 2 few-body) */
+static void closegroup(int nm, const int *list, int mode, int64_t t8, double tnow)
+{
+    int k = nbin++, lo = list[0];
+    double mb = 0.0, xc[3] = {0, 0, 0}, vcm[3] = {0, 0, 0}, fc[4][3], gsize = 0.0, ebind;
+    double gam, tp2;
+    memset(fc, 0, sizeof fc);
+    bnum[k] = nm;
+    bmode[k] = mode;
+    bepoch[k] = tnow;
+    for (int l = 0; l < nm; l++) {
+        int i = list[l];
+        if (i < lo) lo = i;
+        bmass[k][l] = m[i];
+        bident[k][l] = id[i];
+        btype[k][l] = itype[i];
+        mb += m[i];
+        for (int c = 0; c < 3; c++) {
+            xc[c] += m[i] * r[i][c];
+            vcm[c] += m[i] * v[i][c];
+            /* c.o.m. derivatives: the mass-weighted mean, in which the
+             * mutual forces of the stars cancel exactly */
+            fc[0][c] += m[i] * f0[i][c];
+            fc[1][c] += m[i] * f1[i][c];
+            fc[2][c] += m[i] * f2e[i][c];
+            fc[3][c] += m[i] * f3e[i][c];
+        }
+    }
+    for (int c = 0; c < 3; c++) {
+        xc[c] /= mb;
+        vcm[c] /= mb;
+        for (int q = 0; q < 4; q++) fc[q][c] /= mb;
+    }
+    if (mode == 1) {
+        for (int c = 0; c < 3; c++) {
+            brel[k][c] = r[list[0]][c] - r[list[1]][c];
+            brel[k][c + 3] = v[list[0]][c] - v[list[1]][c];
+        }
+        pairorbit(mb, brel[k], brel[k] + 3, &ebind, &gsize);
+        nclosed++;
+    } else {
+        for (int l = 0; l < nm; l++) {
+            int i = list[l];
+            double d[3];
+            for (int c = 0; c < 3; c++) {
+                bx[k][l][c] = d[c] = r[i][c] - xc[c];
+                bv[k][l][c] = v[i][c] - vcm[c];
+            }
+            gsize = fmax(gsize, 2.0 * norm3(d));
+        }
+        nfewformed++;
+    }
+    /* timestep of the c.o.m. (before the stars are removed) */
+    gperturb(xc, vcm, mb, gsize, nm, list, &gam, &tp2);
+    for (int c = 0; c < 3; c++) {
+        f0[lo][c] = fc[0][c];
+        f1[lo][c] = fc[1][c];
+        f2e[lo][c] = fc[2][c];
+        f3e[lo][c] = fc[3][c];
+        r[lo][c] = rp[lo][c] = xc[c];
+        v[lo][c] = vp[lo][c] = vcm[c];
+    }
+    m[lo] = mb;
+    id[lo] = 0;
+    itype[lo] = 0;
+    ib[lo] = k;
+    tk[lo] = t8;
+    tpair2[lo] = tp2;
+    double dtw = etap * sqrt(tp2), amod = norm3(f0[lo]), jmod = norm3(f1[lo]);
+    if (amod > 0.0 && jmod > 0.0) dtw = fmin(dtw, etas * amod / jmod);
+    lev[lo] = commlev(getlevel(dtw), t8);
+    dtk[lo] = (int64_t)1 << (kmax - lev[lo]);
+    /* remove the other slots, highest first, moving the last body into each */
+    int rest[KFMAX], nrest = 0;
+    for (int l = 0; l < nm; l++)
+        if (list[l] != lo) rest[nrest++] = list[l];
+    while (nrest > 0) {
+        int lmax = 0;
+        for (int l = 1; l < nrest; l++)
+            if (rest[l] > rest[lmax]) lmax = l;
+        int h = rest[lmax];
+        rest[lmax] = rest[--nrest];
+        if (useac) acremoved(h, lo);
+        if (h != n - 1) {
+            moverow(n - 1, h);
+            if (useac) acmoved(n - 1, h);
+        }
+        n--;
+    }
+    /* with the neighbour scheme the c.o.m. body needs its own list and
+     * force split, so it is started with a full force sum */
+    if (useac) {
+        acok[lo] = 0;
+        startbody(1, &lo, t8, 0);
+    }
+}
+
+/* split the c.o.m. body i (at integer time t8 = internal time tnow)
+ * back into its nm stars, in slot i and slots n onwards, and start
+ * them off. list returns the slots of the stars. */
+static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
+{
+    int k = ib[i], levc = lev[i], mode = bmode[k];
+    bmode_last_open = mode;
+    vec3 xm[KFMAX], um[KFMAX];
+    double xc[3], vcm[3];
+    memcpy(xc, r[i], sizeof xc);
+    memcpy(vcm, v[i], sizeof vcm);
+    grpcomp(k, xc, vcm, tnow, nm, xm, um);
+    /* a frozen triple: the change of its true energy while it was frozen */
+    if (mode == 3) efrozen += bein[k] - grpeint(*nm, bmass[k], xm, um);
+    for (int l = 0; l < *nm; l++) {
+        int j = i;
+        if (l > 0) {
+            j = n++;
+            if (useac) {
+                nnb[j] = 0;
+                acok[j] = 0;
+                acadded(j, i);
+            }
+        }
+        for (int c = 0; c < 3; c++) {
+            r[j][c] = rp[j][c] = xm[l][c];
+            v[j][c] = vp[j][c] = um[l][c];
+        }
+        m[j] = bmass[k][l];
+        id[j] = bident[k][l];
+        itype[j] = btype[k][l];
+        ib[j] = -1;
+        phi[j] = phi[i];
+        rmin2[j] = HUGE_VAL;
+        list[l] = j;
+    }
+    if (useac) acok[i] = 0;
+    /* remove group k from the table, moving the last group into its place */
+    int last = nbin - 1;
+    if (k != last) {
+        bnum[k] = bnum[last];
+        bmode[k] = bmode[last];
+        memcpy(bmass[k], bmass[last], sizeof bmass[k]);
+        memcpy(bident[k], bident[last], sizeof bident[k]);
+        memcpy(btype[k], btype[last], sizeof btype[k]);
+        memcpy(brel[k], brel[last], sizeof brel[k]);
+        memcpy(brel2[k], brel2[last], sizeof brel2[k]);
+        bepoch[k] = bepoch[last];
+        bein[k] = bein[last];
+        memcpy(bx[k], bx[last], sizeof bx[k]);
+        memcpy(bv[k], bv[last], sizeof bv[k]);
+        for (int l = 0; l < n; l++)
+            if (ib[l] == last) {
+                ib[l] = k;
+                break;
+            }
+    }
+    nbin--;
+    if (mode == 1) nopened++; else nfewopened++;
+    /* forces on the stars and their first timesteps (at least the c.o.m.
+     * level, so the step divides t8) */
+    startbody(*nm, list, t8, levc);
+}
+
+/* what single stars i and j are to each other: 0 nothing to do, 1 a
+ * bound pair with gamma < gclose (can be closed as a binary). A bound
+ * pair whose pericentre is inside rcoll is never closed: it is left in
+ * the main integration, and collcheck merges the stars (or stops the
+ * run) when they actually meet - not before. */
+static int pairstate(int i, int j)
+{
+    if (ib[i] >= 0 || ib[j] >= 0) return 0;
+    double mb = m[i] + m[j], rr[3], vr[3], xc[3], vcm[3], ebind, rapo, gam, tp2;
+    for (int k = 0; k < 3; k++) {
+        rr[k] = r[i][k] - r[j][k];
+        vr[k] = v[i][k] - v[j][k];
+        xc[k] = (m[i] * r[i][k] + m[j] * r[j][k]) / mb;
+        vcm[k] = (m[i] * v[i][k] + m[j] * v[j][k]) / mb;
+    }
+    pairorbit(mb, rr, vr, &ebind, &rapo);
+    if (ebind >= 0.0) return 0;
+    /* the stars of this pair will collide: do not close it (see above) */
+    if (rcoll > 0.0 && pericentre(mb, rr, vr) < rcolli) return 0;
+    int two[2] = {i, j};
+    gperturb(xc, vcm, mb, rapo, 2, two, &gam, &tp2);
+    return gam < gclose ? 1 : 0;
+}
+
+/* perturbation gamma of the group whose c.o.m. body is i */
+static double grpgamma(int i, double tnow)
+{
+    int k = ib[i], nm;
+    vec3 xm[KFMAX], um[KFMAX];
+    double gsize = 0.0, ebind, gam, tp2, xc[3], vcm[3];
+    memcpy(xc, r[i], sizeof xc);
+    memcpy(vcm, v[i], sizeof vcm);
+    grpcomp(k, xc, vcm, tnow, &nm, xm, um);
+    if (bmode[k] == 1) {
+        double rr[3], vr[3];
+        for (int c = 0; c < 3; c++) {
+            rr[c] = xm[0][c] - xm[1][c];
+            vr[c] = um[0][c] - um[1][c];
+        }
+        pairorbit(m[i], rr, vr, &ebind, &gsize);
+    } else {
+        for (int l = 0; l < nm; l++) {
+            double d[3];
+            for (int c = 0; c < 3; c++) d[c] = xm[l][c] - xc[c];
+            gsize = fmax(gsize, 2.0 * norm3(d));
+        }
+    }
+    gperturb(xc, vcm, m[i], gsize, 1, &i, &gam, &tp2);
+    return gam;
+}
+
+/* try to make a few-body group out of the nb bodies in bod (single
+ * stars or groups, all at integer time t8). It is made if it has 3 to
+ * KFMAX stars, its perturbation by the rest of the cluster is below
+ * gfew, and it would pay: the main integration must have at least
+ * NFEWFAC*nm*(nm-1) bodies (see tryfew in nbbin.f90 for why), unless
+ * it is a stable triple, which costs nothing once frozen. Returns 1 if
+ * the group was made. */
+static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
+{
+    int nm = 0;
+    vec3 xm[KFMAX], um[KFMAX], xg[KFMAX], ug[KFMAX];
+    double mm[KFMAX], mt = 0.0, xc[3] = {0, 0, 0}, vcm[3] = {0, 0, 0}, gsize = 0.0, gam, tp2;
+    for (int b = 0; b < nb; b++) {
+        int i = bod[b], k = ib[i], nk = (k >= 0) ? bnum[k] : 1;
+        if (nm + nk > KFMAX) return 0;
+        if (k < 0) {
+            memcpy(xm[nm], r[i], sizeof(vec3));
+            memcpy(um[nm], v[i], sizeof(vec3));
+            mm[nm] = m[i];
+        } else {
+            grpcomp(k, r[i], v[i], tnow, &nk, xg, ug);
+            if (nm + nk > KFMAX) return 0;
+            for (int l = 0; l < nk; l++) {
+                memcpy(xm[nm + l], xg[l], sizeof(vec3));
+                memcpy(um[nm + l], ug[l], sizeof(vec3));
+                mm[nm + l] = bmass[k][l];
+            }
+        }
+        nm += nk;
+        mt += m[i];
+        for (int c = 0; c < 3; c++) {
+            xc[c] += m[i] * r[i][c];
+            vcm[c] += m[i] * v[i][c];
+        }
+    }
+    if (nm < 3) return 0;
+    for (int c = 0; c < 3; c++) {
+        xc[c] /= mt;
+        vcm[c] /= mt;
+    }
+    for (int l = 0; l < nm; l++) {
+        double d[3];
+        for (int c = 0; c < 3; c++) d[c] = xm[l][c] - xc[c];
+        gsize = fmax(gsize, 2.0 * norm3(d));
+    }
+    gperturb(xc, vcm, mt, gsize, nb, bod, &gam, &tp2);
+    if (gam >= gfew) return 0;
+    /* would it pay? */
+    if (n < NFEWFAC * nm * (nm - 1)) {
+        int stable, i1, i2, i3;
+        double rel[6], rel2[6], qin, qout;
+        if (nm != 3) return 0;
+        hierarchy(mm, xm, um, &stable, &i1, &i2, &i3, rel, rel2, &qin, &qout);
+        if (!stable) return 0;
+        if (rcoll > 0.0 && qin < rcolli) return 0;
+    }
+    /* make it: open the groups, then close all the stars together */
+    int nl = 0, list[KFMAX], lk[KFMAX], nk;
+    for (int b = 0; b < nb; b++) {
+        int i = bod[b];
+        if (ib[i] >= 0) {
+            opengroup(i, t8, tnow, &nk, lk);
+            for (int l = 0; l < nk; l++) list[nl++] = lk[l];
+        } else {
+            list[nl++] = i;
+        }
+    }
+    if (nl < 3) return 0;
+    closegroup(nl, list, 2, t8, tnow);
+    /* a stable triple is frozen at once (the new group is the last one) */
+    if (nl == 3) tryfreeze(nbin - 1);
+    return 1;
+}
+
+/* after each block (all active bodies at integer time t8 = internal
+ * time tnow), among the bodies that have just stepped:
+ *  - groups: freeze a few-body group that has become a stable triple;
+ *    open one group that has become perturbed (or take its perturber
+ *    into a few-body group, if that would be isolated)
+ *  - single stars with short steps: close one unperturbed pair, merge
+ *    a pair about to collide, or make a few-body group of a perturbed
+ *    pair and the next nearest body */
+void bincheck(int64_t t8, double tnow)
+{
+    int nact0 = nact, nm, list[KFMAX];
+    int *alist = xalloc(sizeof(int) * (size_t)(nact0 > 0 ? nact0 : 1));
+    memcpy(alist, ilist, sizeof(int) * (size_t)nact0);
+
+    for (int ia = 0; ia < nact0; ia++) {
+        int i = alist[ia];
+        if (i >= n || ib[i] < 0 || tk[i] != t8) continue;
+        double gam = grpgamma(i, tnow);
+        int k = ib[i];
+        double gmax = (bmode[k] == 1) ? gopen : 10.0 * gfew;
+        if (bmode[k] == 2) {
+            if (bnum[k] < 3) {                     /* mergers have left fewer than three */
+                dbgbefore(tnow);
+                opengroup(i, t8, tnow, &nm, list);
+                dbgafter("open<3", tnow);
+                break;
+            }
+            if (bnum[k] == 3 && gam <= gmax) {
+                dbgbefore(tnow);
+                int64_t nf0 = nfrozen;
+                tryfreeze(k);
+                if (nfrozen > nf0) dbgafter("freeze", tnow);
+            }
+        }
+        if (gam > gmax) {
+            int done = 0;
+            if (fewbody) {
+                int j = nearestx(i, -1);
+                if (j >= 0 && tk[j] == t8) {
+                    int two[2] = {i, j};
+                    dbgbefore(tnow);
+                    done = tryfew(2, two, t8, tnow);
+                    if (done) dbgafter("few(g+1)", tnow);
+                }
+            }
+            if (!done) {
+                dbgbefore(tnow);
+                opengroup(i, t8, tnow, &nm, list);
+                dbgafter(bmode_last_open == 1 ? "open-bin" : "open-grp", tnow);
+            }
+            break;
+        }
+    }
+
+    /* single stars - only stars with short steps are candidates */
+    for (int ia = 0; ia < nact0; ia++) {
+        int i = alist[ia], done = 0;
+        if (i >= n || ib[i] >= 0 || tk[i] != t8) continue;
+        if ((double)dtk[i] * tick >= dtclosei) continue;
+        int j = nearestx(i, -1);
+        if (j < 0 || tk[j] != t8) continue;
+        int two[2] = {i, j};
+        if (ib[j] >= 0) {
+            if (fewbody) {                               /* the nearest body is a group */
+                dbgbefore(tnow);
+                done = tryfew(2, two, t8, tnow);
+                if (done) dbgafter("few(1+g)", tnow);
+            }
+        } else {
+            int st = pairstate(i, j);
+            if (st == 1) {
+                dbgbefore(tnow);
+                closegroup(2, two, 1, t8, tnow);
+                dbgafter("close", tnow);
+                done = 1;
+            } else if (fewbody) {
+                int l = nearestx(i, j);
+                if (l >= 0 && tk[l] == t8) {
+                    int three[3] = {i, j, l};
+                    dbgbefore(tnow);
+                    done = tryfew(3, three, t8, tnow);
+                    if (done) dbgafter("few(3)", tnow);
+                }
+            }
+        }
+        if (done) break;
+    }
+    free(alist);
+}
+
+/* at the start (everyone at integer time 0 = internal time tnow):
+ * close all unperturbed binaries in the initial conditions, merge
+ * pairs that would collide, and make few-body groups of perturbed
+ * bound pairs with their nearest body where those are isolated. After
+ * a change slot i may hold a different body, so i only advances when
+ * nothing was done. */
+void binstart(double tnow)
+{
+    int i = 0;
+    while (i < n) {
+        int done = 0;
+        if (ib[i] < 0) {
+            int j = nearestx(i, -1);
+            if (j >= 0 && ib[j] < 0) {
+                int two[2] = {i, j}, st = pairstate(i, j);
+                if (st == 1) {
+                    closegroup(2, two, 1, 0, tnow);
+                    done = 1;
+                } else if (fewbody) {
+                    /* only bound pairs: a perturbed binary and its perturber */
+                    double d[3], dv[3];
+                    for (int k = 0; k < 3; k++) {
+                        d[k] = r[i][k] - r[j][k];
+                        dv[k] = v[i][k] - v[j][k];
+                    }
+                    if (0.5 * dot3(dv, dv) < (m[i] + m[j]) / norm3(d)) {
+                        int l = nearestx(i, j);
+                        if (l >= 0) {
+                            int three[3] = {i, j, l};
+                            done = tryfew(3, three, 0, tnow);
+                        }
+                    }
+                }
+            }
+        }
+        if (!done) i++;
+    }
+}

@@ -86,6 +86,31 @@
 !
    CONTAINS
 ! =====================================================================
+   DOUBLE PRECISION FUNCTION grpeint(nm,mm,xm,um)
+!
+! internal energy (kinetic about the c.o.m. + mutual potential) of nm
+! stars of masses mm at positions xm, velocities um
+!
+   INTEGER, INTENT(IN) :: nm
+   DOUBLE PRECISION, INTENT(IN) :: mm(1:nm),xm(1:3,1:nm),um(1:3,1:nm)
+   INTEGER :: l,l2
+   DOUBLE PRECISION :: vcm(1:3)
+!
+   vcm=0.d0
+   DO l=1,nm
+     vcm=vcm + mm(l)*um(1:3,l)
+   END DO
+   vcm=vcm/SUM(mm(1:nm))
+   grpeint=0.d0
+   DO l=1,nm
+     grpeint=grpeint + 0.5d0*mm(l)*SUM((um(1:3,l) - vcm)**2)
+     DO l2=l + 1,nm
+       grpeint=grpeint - mm(l)*mm(l2)/SQRT(SUM((xm(1:3,l) - xm(1:3,l2))**2))
+     END DO
+   END DO
+!
+   END FUNCTION grpeint
+! =====================================================================
    SUBROUTINE kepler(mu,r0,v0,dt,r1,v1)
 !
 ! advance a bound two-body relative orbit (G(m1+m2) = mu) by dt with the
@@ -110,11 +135,12 @@
    dm=MODULO(nmo*dt,twopi)
    dtr=dm/nmo
 ! Kepler's equation in difference form, dm = x - c1 sin x + c2 (1 - cos x)
-! the root is within 1 of dm; Newton's method kept inside the bracket
-   lo=dm - 1.d0
-   hi=dm + 1.d0
+! x - dm = e (sin(x + E0) - sin E0), so the root is within 2e < 2 of
+! dm; Newton's method kept inside the bracket
+   lo=dm - 2.d0
+   hi=dm + 2.d0
    x=dm
-   DO it=1,60
+   DO it=1,100
      ff=x - c1*SIN(x) + c2*(1.d0 - COS(x)) - dm
      fp=1.d0 - c1*COS(x) + c2*SIN(x)
      IF (ff > 0.d0) THEN
@@ -844,6 +870,8 @@
    levc=lev(i)
    mode=bmode(k)
    CALL grpcomp(k,r(1:3,i),v(1:3,i),tnow,nm,xm,um)
+! a frozen triple: the change of its true energy while it was frozen
+   IF (mode == 3) efrozen=efrozen + bein(k) - grpeint(nm,bmass(1:nm,k),xm(1:3,1:nm),um(1:3,1:nm))
    list=0
    DO l=1,nm
      IF (l == 1) THEN
@@ -881,6 +909,7 @@
      brel(1:6,k)=brel(1:6,nbin)
      brel2(1:6,k)=brel2(1:6,nbin)
      bepoch(k)=bepoch(nbin)
+     bein(k)=bein(nbin)
      IF (fewbody) THEN
        bx(1:3,1:kfmax,k)=bx(1:3,1:kfmax,nbin)
        bv(1:3,1:kfmax,k)=bv(1:3,1:kfmax,nbin)
@@ -909,9 +938,13 @@
    INTEGER FUNCTION pairstate(i,j)
 !
 ! what single stars i and j are to each other:
-!   0  nothing to do (not both single, unbound, or perturbed)
+!   0  nothing to do (not both single, unbound, perturbed, or a pair
+!      whose pericentre is inside rcoll)
 !   1  a bound pair with gamma < gclose: can be closed as a binary
-!   2  a bound pair whose pericentre is inside rcoll: a collision
+! A bound pair whose pericentre is inside rcoll is never closed: it is
+! left in the main integration, and collcheck merges the stars (or
+! stops the run) when they actually meet - not before, however far
+! apart they are now.
 !
    INTEGER, INTENT(IN) :: i,j
    INTEGER :: two(1:2)
@@ -924,12 +957,9 @@
    vr=v(1:3,i) - v(1:3,j)
    CALL pairorbit(mb,rr,vr,ebind,rapo)
    IF (ebind >= 0.d0) RETURN
-! the orbit of a closed binary is fixed, so check its pericentre now
+! the stars of this pair will collide: do not close it (see above)
    IF (rcoll > 0.d0) THEN
-     IF (pericentre(mb,rr,vr) < rcolli) THEN
-       pairstate=2
-       RETURN
-     END IF
+     IF (pericentre(mb,rr,vr) < rcolli) RETURN
    END IF
    xc=(m(i)*r(1:3,i) + m(j)*r(1:3,j))/mb
    vc=(m(i)*v(1:3,i) + m(j)*v(1:3,j))/mb
@@ -939,24 +969,6 @@
    IF (gam < gclose) pairstate=1
 !
    END FUNCTION pairstate
-! =====================================================================
-   SUBROUTINE paircollide(i,j,t8,tnow)
-!
-! the bound pair i, j has a pericentre inside rcoll: merge the stars,
-! or stop the run if mergers are off
-!
-   INTEGER, INTENT(IN) :: i,j
-   INTEGER(KIND=8), INTENT(IN) :: t8
-   DOUBLE PRECISION, INTENT(IN) :: tnow
-   DOUBLE PRECISION :: rr(1:3),vr(1:3)
-!
-   rr=r(1:3,i) - r(1:3,j)
-   vr=v(1:3,i) - v(1:3,j)
-   IF (.NOT. mergers) CALL collision(i,j,SQRT(SUM(rr*rr)), &
-&    pericentre(m(i) + m(j),rr,vr),tnow)
-   CALL mergestars(i,j,t8,tnow)
-!
-   END SUBROUTINE paircollide
 ! =====================================================================
    SUBROUTINE grpgamma(i,tnow,gam)
 !
@@ -1001,6 +1013,9 @@
 &    rel,rel2,qin,qout)
    IF (.NOT. stable) RETURN
    IF (rcoll > 0.d0 .AND. qin < rcolli) RETURN
+! its true internal energy now, at which it is counted while frozen (see
+! diagnose in nbout) - before the stars are put in their new order
+   bein(k)=grpeint(3,bmass(1:3,k),bx(1:3,1:3,k),bv(1:3,1:3,k))
    idx=(/i1,i2,i3/)
    tm=bmass(idx,k)
    ti=bident(idx,k)
@@ -1208,9 +1223,6 @@
        CASE (1)
          CALL closegroup(2,two,1,t8,tnow,dum,dum)
          done=.TRUE.
-       CASE (2)
-         CALL paircollide(i,j,t8,tnow)
-         done=.TRUE.
        CASE DEFAULT
          IF (fewbody) THEN
            CALL nearestx(i,j,l)
@@ -1259,9 +1271,6 @@
            SELECT CASE (pairstate(i,j))
            CASE (1)
              CALL closegroup(2,two,1,0_8,tnow,dum,dum)
-             done=.TRUE.
-           CASE (2)
-             CALL paircollide(i,j,0_8,tnow)
              done=.TRUE.
            CASE DEFAULT
 ! only bound pairs: a perturbed binary and its perturber

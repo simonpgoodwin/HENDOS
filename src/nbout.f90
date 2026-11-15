@@ -13,6 +13,7 @@
    IMPLICIT NONE
 ! diagnostics of the current (synchronised) state - set by diagnose
    DOUBLE PRECISION :: ekin,epot,etid,etot  ! energies, internal units
+   DOUBLE PRECISION :: efrozennow=0.d0      ! efrozen + what unfreezing every triple now would add
    DOUBLE PRECISION :: etot0                ! initial energy
    DOUBLE PRECISION :: eprev                ! energy at previous output
    DOUBLE PRECISION :: demax                ! largest |dE/E| so far
@@ -149,10 +150,11 @@
 !
    DOUBLE PRECISION, INTENT(IN) :: time
    INTEGER :: i,k,l,l2,nm
-   DOUBLE PRECISION :: mt,frac(1:3),xm(1:3,1:kfmax),um(1:3,1:kfmax)
+   DOUBLE PRECISION :: mt,frac(1:3),xm(1:3,1:kfmax),um(1:3,1:kfmax),ecorr
 !
    frac=(/0.1d0, 0.5d0, 0.9d0/)
    CALL energy(ekin,epot,etid)
+   ecorr=0.d0
 ! add the internal energy of the groups treated as one body (binaries,
 ! few-body groups, triples) at the current phase of their motion:
 ! kinetic energy relative to the c.o.m. and mutual potential energy
@@ -160,6 +162,8 @@
      k=ib(i)
      IF (k == 0) CYCLE
      CALL grpcomp(k,r(1:3,i),v(1:3,i),time/tunit,nm,xm,um)
+     IF (bmode(k) == 3) ecorr=ecorr + bein(k) - grpeint(nm,bmass(1:nm,k), &
+&      xm(1:3,1:nm),um(1:3,1:nm))
      DO l=1,nm
        ekin=ekin + 0.5d0*bmass(l,k)*SUM((um(1:3,l) - v(1:3,i))**2)
        DO l2=l + 1,nm
@@ -168,8 +172,20 @@
      END DO
    END DO
 ! emerged is the orbital energy removed by mergers so far: with it the
-! total is still conserved
-   etot=ekin + epot + etid + emerged
+! total is still conserved.
+! FROZEN TRIPLES: two nested Kepler orbits keep the energies of the
+! inner and outer orbits fixed but leave out the (small) interaction of
+! the outer star with the two inner stars separately, so the true
+! energy of a frozen triple wanders a little with the phases of its
+! orbits - and in a cluster rich in hard binaries that can be a large
+! part of the total. So the total counts each frozen triple at its
+! energy when it was frozen (bein), and when a triple is unfrozen the
+! difference from its true energy then is added to efrozen. The total
+! is then conserved to the accuracy of the main integration, and
+! efrozennow (header key energy_change_frozen_triples) shows how much
+! the freezing has changed the energy.
+   efrozennow=efrozen + ecorr
+   etot=ekin + epot + etid + emerged + efrozennow
 !
    mt=SUM(m(1:n))
    cm=0.d0
@@ -678,6 +694,7 @@
      CALL hdri(u,'few_body_groups_formed',nfewformed)
      CALL hdri(u,'few_body_groups_opened',nfewopened)
      CALL hdri(u,'triples_frozen',nfrozen)
+     CALL hdrd(u,'energy_change_frozen_triples',efrozennow*vunit**2)
    END IF
 ! collisions and mergers
    IF (rcoll > 0.d0) THEN

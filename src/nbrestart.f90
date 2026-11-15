@@ -135,6 +135,12 @@
      WRITE(9) acok(1:n)
    END IF
 !
+   IF (nbin > 0 .OR. efrozen /= 0.d0) THEN
+     CALL secthead(9,'FROZEN',2)
+     WRITE(9) efrozen
+     WRITE(9) bein(1:MAX(nbin,1))
+   END IF
+!
 ! >>> NEW SECTIONS GO HERE
 !
    CALL secthead(9,'END',0)
@@ -253,6 +259,9 @@
        END IF
        READ(9) bx(1:3,1:kfmax,1:nbin)
        READ(9) bv(1:3,1:kfmax,1:nbin)
+     CASE ('FROZEN')
+       READ(9) efrozen
+       READ(9) bein(1:MAX(nbin,1))
      CASE ('NEIGHBOURS')
        READ(9) rs0, nopt
        nnbopt=nopt

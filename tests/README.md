@@ -13,7 +13,11 @@ python3 run_tests.py --only merger   # tests whose name contains 'merger'
 python3 run_tests.py --keep          # keep the working files (in tests/work)
 python3 run_tests.py --dry           # write the input files, run nothing
 python3 run_tests.py --hermite /path/to/another/hermite
+python3 run_tests.py --hermite ../run/hermite_c   # the C version (make hermite_c)
 ```
+
+On the C version every test passes except `plummer_tree`, which fails by
+design because the C version has no tree.
 
 It needs Python 3 with numpy, and uses `analysis/hendosio.py` to read the
 snapshots. Each test makes its own initial conditions, so `makeics` is not
@@ -37,7 +41,7 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | Test | What it runs | What it checks |
 |---|---|---|
 | `kepler_circular` | two stars, circular orbit, 10 periods, integrated directly | energy; stars back where they started |
-| `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy |
+| `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy (1e-4: about 2e-5 is normal at `eta` = 0.02) |
 | `binary_closed` | the same binary treated as one body | exact Kepler orbit: energy to 1e-10, position, one group |
 | `pythagorean_direct` | Burrau's three-body problem to t = 10, directly | energy |
 | `pythagorean_fewbody` | the same as a few-body group, with nine light distant stars so that there are the 12 bodies a group of three needs | energy; a group was formed |
@@ -48,7 +52,7 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `plummer_tree` | the same with the tree | energy (looser: the tree is approximate) |
 | `plummer_tide` | the same in the solar tidal field | Jacobi energy; tidal keys in the header |
 | `header_flexible` | a run started from a snapshot with an unknown header key and an extra column added | keys follow the physics; the changed file is read correctly |
-| `merger` | two stars collide head on beside a third | one star fewer; mass and momentum conserved; merger file, screen alert and header count; id of the more massive kept |
+| `merger` | two stars collide head on beside a third | one star fewer; mass and momentum conserved (energy to 2e-3, momentum to 1e-5: just before they meet the pair has about 700 times the system's total kinetic energy); merger file, screen alert and header count; id of the more massive kept |
 | `merger_off` | the same with `mergers = .false.` | the run stops with the collision alert |
 | `ensemble` | three sets of initial conditions run as one ensemble, all at once | every member finishes with its own snapshots, log and header labels; the members differ; when two members are added only those two are run |
 | `restart` | a run stopped half way and restarted | ends where the unbroken run ends (positions to 1e-9 pc) |
