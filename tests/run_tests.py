@@ -15,7 +15,9 @@ the code, before trusting a production run:
     python3 run_tests.py --dry           write the input files, run nothing
 
 It needs numpy and the executable HENDOS/run/hermite (make it first; another
-one can be given with --hermite). Each test makes its own initial conditions
+one, such as the archived Fortran hermite_fortran, can be given with
+--hermite). A test that needs something the executable does not have (the
+tree test, with the C code) is reported as SKIP, not FAIL. Each test makes its own initial conditions
 here, so makeics is not needed. The exit status is 0 if every test passed.
 
 TO ADD A TEST: write a function test_<name>(t) below. It gets a Tester, makes
@@ -75,6 +77,11 @@ def fortran(value):
 
 
 class Failed(Exception):
+    pass
+
+
+class Skipped(Exception):
+    """The executable does not have what the test needs (e.g. the tree)."""
     pass
 
 
@@ -367,7 +374,12 @@ def test_plummer_tree(t):
     """The same with the Barnes-Hut tree."""
     m, pos, vel = plummer(256)
     t.write_ics('ics.dat', m, pos, vel)
-    r = t.run('pltr', 'ics.dat', run__tend=2.0, tree__usetree=True)
+    try:
+        r = t.run('pltr', 'ics.dat', run__tend=2.0, tree__usetree=True)
+    except Failed as err:
+        if 'tree is not in this version' in str(err):
+            raise Skipped('this executable has no tree (only the archived Fortran has it)')
+        raise
     t.check('energy error', energy_error(r.last), 5e-3)
 
 
@@ -548,27 +560,36 @@ def main():
     os.makedirs(workdir, exist_ok=True)
 
     npass = 0
+    nskip = 0
     failed = []
     for name, fn in tests:
         t = Tester(name, hermite, workdir, args.dry)
         t0 = time.time()
+        skipped = False
         try:
             fn(t)
+        except Skipped as err:
+            skipped = True
+            t.lines.append('skip  ' + str(err))
         except Failed as err:
             t.ok = False
             t.lines.append('FAIL  ' + str(err))
         except Exception as err:                       # a broken test or output file
             t.ok = False
             t.lines.append('FAIL  %s: %s' % (type(err).__name__, err))
-        print('%-22s %s   %.1f s' % (name, 'PASS' if t.ok else 'FAIL', time.time() - t0))
+        verdict = 'SKIP' if skipped else ('PASS' if t.ok else 'FAIL')
+        print('%-22s %s   %.1f s' % (name, verdict, time.time() - t0))
         for line in t.lines:
             print('    ' + line)
-        if t.ok:
+        if skipped:
+            nskip += 1
+        elif t.ok:
             npass += 1
         else:
             failed.append(name)
     print('-' * 70)
-    print('%d of %d tests passed' % (npass, len(tests)))
+    print('%d of %d tests passed' % (npass, len(tests) - nskip)
+          + ('  (%d skipped)' % nskip if nskip else ''))
     if failed:
         print('failed: ' + ', '.join(failed))
         print('working files are in %s' % workdir)

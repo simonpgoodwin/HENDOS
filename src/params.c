@@ -1,9 +1,9 @@
 /* ==============================================================
- * HENDOS (C version) - params.c
+ * HENDOS - HErmite N-body Dynamics Of Systems - params.c
  * SET-UP: units and the parameter file.
  *
- * The parameter file is the same Fortran-namelist file the Fortran
- * version reads (run/params.nml). C has no namelists, so there is a
+ * The parameter file is written as a Fortran namelist (run/params.nml),
+ * the format of the original Fortran version (now in archive/fortran). C has no namelists, so there is a
  * small reader here that understands what those files contain:
  *     &section
  *       name = value      ! comment
@@ -12,7 +12,7 @@
  * text in quotes, and  tij(1,1) = ...  for the tidal tensor. Sections
  * can be in any order; a parameter left out keeps its standard value.
  * A name that is not a parameter is an error, as it is in Fortran.
- * (The Fortran equivalent is readparams in nbsetup.f90.)
+ * (Archived Fortran equivalent: readparams in nbsetup.f90.)
  * ============================================================== */
 #include <ctype.h>
 #include <omp.h>
@@ -387,8 +387,9 @@ void readparams(const char *pfile)
         if (gfew <= 0.0) BAD("gfew must be > 0");
         if (etafew <= 0.0 || etafew > 0.2) BAD("etafew must be between 0 and 0.2");
     }
-    if (usetree) BAD("the Barnes-Hut tree is not in the C version of HENDOS - "
-                     "set usetree = .false., or use the Fortran version");
+    if (usetree) BAD("the Barnes-Hut tree is not in this version of HENDOS - "
+                     "set usetree = .false. (only the archived Fortran version, "
+                     "archive/fortran, has it)");
     if (useac) {
         if (nnbopt < 0 || nnbmax < 0) BAD("nnbopt and nnbmax must be >= 0 (0 = automatic)");
         if (etar <= 0.0) BAD("etar must be > 0");

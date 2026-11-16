@@ -1,9 +1,9 @@
 /* ==============================================================
- * HENDOS (C version) - few.c
+ * HENDOS - HErmite N-body Dynamics Of Systems - few.c
  * FEW-BODY TOOLS: a small integrator for an isolated group of a few
  * stars, and the stability test for a hierarchical triple. These know
  * nothing about the rest of the code. Internal units (G = 1).
- * (Fortran equivalent: nbfew.f90.)
+ * (Archived Fortran equivalent: archive/fortran/src/nbfew.f90.)
  * ============================================================== */
 #include "hendos.h"
 

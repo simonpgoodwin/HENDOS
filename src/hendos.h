@@ -1,20 +1,19 @@
 /* ==============================================================
  * HENDOS - HErmite N-body Dynamics Of Systems
- * THE C VERSION of the main simulation code (for comparison with the
- * Fortran version in ../src). It reads the same parameter file and
- * initial conditions and writes the same output files, so makeics, the
- * analysis tools, the regression tests and the benchmark all work
- * with either. See CSRC_README.md.
+ * The N-body code (see src/README.md for what is in each file).
  *
  * hendos.h - everything shared between the C files: the parameters,
  * the particle arrays, the groups, the neighbour scheme and the
- * routines. (The Fortran equivalent is the module nbvars.)
+ * routines. (Archived Fortran equivalent: the module nbvars.)
  *
- * Differences from the Fortran to keep in mind when reading both:
+ * Conventions:
  *   - arrays start at 0, so body i is 0..n-1, a group index is
  *     0..nbin-1 and 'no group' / 'no body' is -1 (0 in the Fortran)
  *   - a vector is double[3]; r[i][0] is x of body i (r(1,i) in Fortran)
- * Internal units as in the Fortran: G = 1, Msun, pc.
+ *   - internal units G = 1, Msun, pc; all input and output in Msun,
+ *     pc, km/s, Myr
+ * EVERY variable that is shared is declared here once; the EXT macro
+ * makes it a definition in main.c and a declaration everywhere else.
  * ============================================================== */
 #ifndef HENDOS_H
 #define HENDOS_H
@@ -57,7 +56,7 @@ EXT int nensemble, nparallel, ensfirst, ensmember;
 EXT char ensbase[64];
 EXT int useac, nnbopt, nnbmax;
 EXT double etar;
-EXT int usetree, nleaf, ntreebuild;    /* read, but the tree is not in the C version */
+EXT int usetree, nleaf, ntreebuild;    /* read, but the tree is only in the archived Fortran */
 EXT double theta;
 EXT int nompmin, nompj, nthreads;
 

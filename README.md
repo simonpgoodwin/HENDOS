@@ -5,14 +5,14 @@
 The Sheffield group's N-body code for stellar dynamics (named after
 Henderson's Relish). This file is the overview; the other READMEs are
 
-- `src/README.md` - what every routine does and which file it is in
-- `csrc/CSRC_README.md` - the C version of the main code, for comparison
+- `src/README.md` - what every function does and which file it is in
 - `src/ics/ICS_README.md` - how to change the way initial conditions are made
 - `src/ics/FRACTAL_README.md` - how the fractal generator works
 - `run/PARAMS_README.md` - a full description of every parameter
 - `analysis/README.md` - the viewer and the analysis tools
 - `tests/README.md` - the regression tests
 - `benchmark/README.md` - comparing HENDOS with Starlab's kira
+- `archive/fortran/README.md` - the old Fortran version of the N-body code
 
 **These READMEs are kept up to date with the code: any change to the code
 that alters what they describe must update them in the same change.**
@@ -22,9 +22,9 @@ that alters what they describe must update them in the same change.**
 HENDOS/
   README.md              this file
   src/                   all source code
-    README.md            what each routine does and where it is
-    nbvars.f90 ...       the N-body code, one module per file
-    ics/                 the initial conditions generator
+    README.md            what each function does and where it is
+    hendos.h, *.c        the N-body code (C)
+    ics/                 the initial conditions generator (Fortran)
       makeics.f90        the program
       plummersubs.f90    Plummer sphere (routine makeplummer)
       fractalsubs.f90    box fractals (routines makefractal, larsonfractal)
@@ -33,15 +33,11 @@ HENDOS/
       icrandom.f90       random numbers (ran3, gasdev)
       ICS_README.md      how to change the generator
       FRACTAL_README.md  how the fractals are made
-  csrc/                  a C version of the main code (hermite_c), for comparison
-    CSRC_README.md       what is in it and how it differs from the Fortran
-    main.c, *.c, hendos.h  same algorithms, same files in and out (no tree)
   run/                   where the code is built and run
     Makefile             builds the executables into this directory
     params.nml           parameter file for hermite
     ics.nml              parameter file for makeics
     PARAMS_README.md     description of every parameter
-    build/               object and module files (made by make)
     data/                initial conditions, snapshots, analysis files
   analysis/              looking at a run (Python)
     README.md            how to use them
@@ -57,6 +53,9 @@ HENDOS/
   tests/                 regression tests (Python)
     README.md            what the tests are and how to add one
     run_tests.py         runs hermite on problems with known answers
+  archive/fortran/       the old Fortran N-body code (the only one with the tree)
+    README.md            what it is, how to build it, what changed
+    src/, run/Makefile   its source, routine guide and Makefile
   HENDOS_logo.jpg        the HENDOS logo
   docs/                  notes on the methods (LaTeX)
     larson.tex, .pdf     how the Larson fractals match the size-linewidth relation
@@ -66,12 +65,15 @@ HENDOS/
 ## Building and running (all from `HENDOS/run`)
 ```
 cd HENDOS/run
-make                                        (builds hermite and makeics here)
+make                                        (builds hermite (C) and makeics (Fortran) here)
 ./makeics ics.nml                           (initial conditions: writes data/plum1k.dat)
 export OMP_NUM_THREADS=8
 ./hermite params.nml | tee data/test01.log  (params.nml is the default name)
 ```
-All run parameters are in `params.nml` (Fortran namelist, commented). Sections
+`make hermite` needs only a C compiler with OpenMP (gcc, as standard), and
+`make makeics` needs gfortran. The compilers and flags are at the top of
+`run/Makefile`.
+All run parameters are in `params.nml` (written as a Fortran namelist, commented). Sections
 changed per run are at the top (`&run`, `&output`, `&analysis`, `&tides`,
 `&tree`), standard settings below (`&binaries`, `&collisions`, `&integrator`,
 `&computing`). Any parameter or section left out takes its standard value.
@@ -165,10 +167,13 @@ difference between stars rose with separation to the power 0.50 for `larson`,
 ## Particle types
 - Every particle has a type: `star` (default), `white_dwarf`, `neutron_star`,
   `black_hole`, `planet`. In files the type is this name (no spaces, any case).
-- Internally an integer code `itype(i)` indexing the table `typename` in
-  `nbvars.f90` (named codes `tstar`, `twdwarf`, `tnstar`, `tbhole`, `tplanet`).
-- To add a type: increase `ntypes` and add the name to `typename` in
-  `nbvars.f90` (max 12 characters, padded with blanks). Nothing else changes.
+- Internally an integer code `itype[i]` indexing the table `typename_` in
+  `src/params.c` (named codes `TSTAR`, `TWDWARF`, `TNSTAR`, `TBHOLE`, `TPLANET`
+  in `src/hendos.h`).
+- To add a type: increase `NTYPES` in `src/hendos.h` and add the name to
+  `typename_` in `src/params.c` (no spaces, at most 12 characters). Nothing
+  else changes. The initial conditions generator writes type names as text,
+  so it needs no change.
 - Types are set by the initial-conditions generator, read by `readic` (unknown
   names stop the run with the list of known types), kept through binary
   closing/opening (`btype`), and written to every snapshot.
@@ -186,7 +191,8 @@ difference between stars rose with separation to the power 0.50 for `larson`,
   `hendosensemble.py` writes `<datadir>/<runid>_ens_<what>.dat` and `.png`.
 - A new run (start time 0) refuses to start if files for its runid exist in
   the data directory.
-- The `creator` header line of every file is `HENDOS (<source file>)`.
+- The `creator` header line of every file says which code wrote it:
+  `HENDOS (C, src/main.c)`, or `HENDOS (hermite.f90)` for the archived Fortran.
 
 ## Snapshot format (NBODY-SNAPSHOT 2) - also the initial-conditions format
 - Header of `# key = value` lines (format, creator, date, runid, parameter file,
@@ -205,7 +211,7 @@ difference between stars rose with separation to the power 0.50 for `larson`,
   `physics` lists what was on (e.g. `gravity tide binaries few_body mergers`);
   and columns are found by name from the `columns` key, with new columns added
   after the existing ones. The lines that depend on the physics are written by
-  `hdrphysics` in `src/nbout.f90`, one block per piece of physics, each written
+  `hdrphysics` in `src/io.c`, one block per piece of physics, each written
   only when it is switched on - so a run without a tide has no tidal keys, and
   stellar evolution will add its own block when it is on. `hendosio.py` reads
   files this way already.
@@ -225,14 +231,14 @@ difference between stars rose with separation to the power 0.50 for `larson`,
   time left), summary at the end.
 - `verbose`: also parameters, initial-condition diagnostics, and a block per
   output (energy components, errors, Lagrangian radii, c.o.m. drift, steps,
-  timestep-level histogram, binaries, tree, speed).
+  timestep-level histogram, groups, mergers, neighbour scheme, speed).
 - Warnings in both modes: |dE/E| > `dewarn`, steps held at `kmax`.
 - Energies (direct-N, expensive) are only computed for screen output and snapshots.
 
 ## In-run analysis (`&analysis`)
 Each analysis has a switch, runs every `tana`, writes `<runid>_ana_<name>.dat`
 with a metadata header. Example included: `lagrangian` (1-90% Lagrangian radii,
-sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
+sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
 
 ## Integrator
 - 4th-order Hermite (Makino & Aarseth 1992), block timesteps in powers of two on
@@ -256,7 +262,7 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   another binary, or a perturbed pair and its perturber - whose perturbation by
   the rest of the cluster is below `gfew` is replaced by one centre-of-mass body
   and integrated on its own by a small shared-timestep Hermite integrator
-  (`src/nbfew.f90`). The group and the cluster advance together in time. It is
+  (`src/few.c`). The group and the cluster advance together in time. It is
   opened again when gamma > 10 `gfew`, which is what happens when a star is
   ejected. A group of three that passes the Mardling & Aarseth (2001) stability
   test is frozen as two nested Kepler orbits (no secular evolution, so no
@@ -276,72 +282,73 @@ sigma_3D). How to add a new one is described at the top of `src/nbana.f90`.
   summation in its Hermite form. Each star has a neighbour list; the neighbour
   (irregular) force is summed every step and the rest (regular force) only on
   longer regular steps, being extrapolated linearly in between and corrected by
-  a Hermite corrector over the regular step. Not used with the tree, and
-  switched off (with a note on the screen) for fewer than 150 stars.
+  a Hermite corrector over the regular step. Switched off (with a note on the screen) for fewer than 150 stars.
 - **Restart files** (`trestart`, `restart`): the complete state in binary,
   written at output times, from which a run carries on exactly. The file is a
   list of named sections that a reader can skip, so new physics can add its own.
-- **Barnes-Hut tree** (`&tree`): octree with monopole, quadrupole and octupole
-  moments, opening angle `theta`; jerk from monopole + internal-motion quadrupole
-  term. The tree is rebuilt every `ntreebuild` block steps (standard value 10)
-  and restocked (moments recomputed) on every step in between. Tide works with the tree; energies stay direct.
+- **Barnes-Hut tree** (`&tree`): **only in the archived Fortran version**
+  (`archive/fortran`). The C code stops with a message if `usetree` is on.
+  The tree is an octree with monopole, quadrupole and octupole moments and
+  opening angle `theta`, rebuilt every `ntreebuild` block steps.
 
 ## Parallelisation (OpenMP)
 Every loop whose cost grows with N is parallel; the number of threads is set
 with `OMP_NUM_THREADS` and printed at the start of a run.
 - **Forces**: parallel over active stars for big blocks (>= `nompmin`) or over
-  the j-sum with reductions for small blocks (N >= `nompj`); tree walks
-  parallel over active stars.
-- **Each block**: block-time search, the list of active particles, predictor,
-  corrector, acceptance and new timestep levels.
-- **Tree build**: shared out at the top level - the root's eight octants are
-  built by separate threads, each looking through all the particles for those
-  in its octant. 2, 4 or 8 threads share the octants evenly and no more than 8
-  are used. The tree is identical to a serial build.
-- **Tree moments**: parallel over the leaves, then over the top-level subtrees
-  for the internal nodes.
+  the j-sum with reductions for small blocks (N >= `nompj`).
+- **Each block**: block-time search, predictor, corrector, acceptance and new
+  timestep levels.
 - **Neighbour scheme**: big blocks share out the active stars; for small
   blocks each full sum and neighbour search is shared out; the list
   bookkeeping when bodies change is parallel.
 - **Other**: starting timesteps, energies and potentials, and the O(N) sums in
   the binary routines (perturbation, nearest neighbour).
 
-Still serial, because they are cheap or rare: the binary and collision
-bookkeeping between blocks, the few-body integrator (a handful of stars),
-output and the in-run analysis.
+Still serial, because they are cheap or rare: making the list of active
+particles, the binary and collision bookkeeping between blocks, the few-body
+integrator (a handful of stars), output and the in-run analysis.
+(The archived Fortran also builds its tree in parallel: see `archive/fortran/src/README.md`.)
 
-## The C version
-`csrc/` holds a C version of the main code, so the Fortran can be checked
-against it: `make hermite_c` in `run/`, then use `./hermite_c` exactly like
-`./hermite`. It reads the same parameter and initial conditions files and
-writes the same output, so `makeics`, the analysis tools, the tests and the
-benchmark all work with it. It has everything except the Barnes-Hut tree.
-Running it found four bugs in the shared algorithms, now fixed in both
-versions (see `csrc/CSRC_README.md`). The worst was in the Kepler solver for
-closed binaries.
+## The archived Fortran version
+HENDOS was first written in Fortran, and that version is kept in
+`archive/fortran`. It is the only version with the Barnes-Hut tree. It reads
+and writes the same files as the C code (except restart files), so every tool
+works with either. It has never been compiled. See
+`archive/fortran/README.md`, which also lists the bugs that were found when
+the code was translated to C, and fixed in both.
+
+## Debugging aids
+- `HENDOS_DEBUG=1 ./hermite params.nml` prints the change in total energy
+  across every binary or few-body event: close, open, freeze, a group formed.
+  Each change should be about 1e-7 or smaller, so a big one points straight
+  at the event that is wrong.
+- `HENDOS_TRACE="t1 t2" ./hermite params.nml` (times in Myr) prints every block
+  between t1 and t2 in which the total energy changed by more than 1e-7,
+  with the stars that were active. It costs an O(N²) sum per block, so keep
+  the window short.
 
 ## Testing
-`tests/run_tests.py` runs `hermite` (or `hermite_c`, with `--hermite`) on 17 small problems with known answers
+`tests/run_tests.py` runs `hermite` on 17 small problems with known answers
 (two-body orbits, the Pythagorean problem, a frozen triple, a Plummer sphere
-by direct sums, neighbour scheme, tree and with a tide, a merger, restarts,
-header flexibility) and checks each against a tolerance. Run it after every
-change. See `tests/README.md`.
+by direct sums, with the neighbour scheme, the tree and a tide, a merger,
+restarts, ensembles, header flexibility) and checks each against a tolerance.
+The tree test is skipped for the C code, which has no tree. Run it after
+every change. See `tests/README.md`.
 
 ## Status
-Developed without a Fortran compiler: **none of the Fortran has been compiled
-or run.** The C version in `csrc/`, which follows the Fortran routine by
-routine, *has* been compiled and run. It passes every regression test except
-the tree test (there is no tree in C), also under the address and
-undefined-behaviour sanitisers. So the algorithms are tested, but the Fortran
-translation of them is not yet. The algorithms were checked with Python models before or while the
-Fortran was written (Hermite + block steps, tide, binaries, tree and its
-parallel build, the neighbour scheme, the few-body integrator), and the
-Fortran was checked for block structure. Not covered by any Python model, and
-so the most likely places for mistakes: the bookkeeping that forms and opens
-few-body groups, the neighbour-list updates when bodies change, mergers inside
-the main code, and the restart file. The first compilation will need fixes;
-the regression tests are there to find the rest, and their tolerances are
-first guesses.
+The N-body code (C) has been compiled with gcc 13 and run. It passes all 16
+regression tests that apply to it, also with gcc's address and
+undefined-behaviour checks on, and it has been run on clusters with many
+primordial binaries. The algorithms were also checked with Python models as
+they were written (Hermite with block steps, the tide, binaries, the
+neighbour scheme, the few-body integrator). The regression-test limits were
+first set from those models, and some have since been set from the C runs.
+Two things have not been done yet: the break-even values of the neighbour
+scheme (150 stars) and of few-body groups (`NFEWFAC`) have not been measured
+on real timings, and there has been no comparison with kira.
+The initial conditions generator (Fortran) and the archived Fortran N-body
+code have not been compiled here, because there is no Fortran compiler in
+this environment.
 
 Known limits of the new parts:
 - few-body groups are integrated without the cluster's tidal pull on them

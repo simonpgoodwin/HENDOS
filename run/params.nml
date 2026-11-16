@@ -169,14 +169,14 @@
 !-----------------------------------------------------------------------
 !   The force on each star is split into a fast-changing part from its
 !   neighbours, summed every step, and a slowly changing part from
-!   everything else, summed only every few steps. For runs without the
-!   tree; worth it above a thousand stars or so.
+!   everything else, summed only every few steps. Worth it above a
+!   thousand stars or so.
 !-----------------------------------------------------------------------
 &neighbours
 
   useac  = .false.         ! [.false.] .true. = use the neighbour scheme
-                           !   (it is switched off if usetree is on)
-                           !   and, with a note on the screen, if
+                           !   (it is switched off, with a note on
+                           !   the screen, if
                            !   there are fewer than 150 stars
 
   nnbopt = 0               ! [0]  number of neighbours wanted per star,
@@ -193,6 +193,8 @@
 
 !-----------------------------------------------------------------------
 !   BARNES-HUT TREE   -   for large associations on large scales
+!   ONLY IN THE ARCHIVED FORTRAN VERSION (archive/fortran): the C code
+!   in use stops with a message if usetree = .true.
 !-----------------------------------------------------------------------
 !   Forces from an octree with monopole, quadrupole and octupole moments
 !   instead of direct summation. Energies are still direct-N, and the

@@ -240,7 +240,7 @@
 ! the name of member k of an ensemble: _e and the member number (3
 ! digits, more if needed) put before the file extension,
 !   data/plum1k.dat -> data/plum1k_e007.dat
-! hermite uses the same rule (ensname in src/nbsetup.f90) - keep the
+! hermite uses the same rule (ensname in src/params.c) - keep the
 ! two the same.
 !
    CHARACTER(len=*), INTENT(IN) :: name
@@ -380,8 +380,8 @@
 ! particle types
 ! >>> CHANGE HERE to give stars other types, e.g.
 !        WHERE (m > 20.d0) ptype='black_hole'
-!     The names must be ones the N-body code knows (typename in
-!     src/nbvars.f90).
+!     The names must be ones the N-body code knows (typename_ in
+!     src/params.c).
    ptype='star'
 !
    END SUBROUTINE makemasses

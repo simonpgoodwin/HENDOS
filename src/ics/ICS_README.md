@@ -109,7 +109,7 @@ the most massive star at the centre.
 ### Change particle types
 For a rule that depends on mass, the marked place at the end of `makemasses`
 in `makeics.f90`, or example 1 in `userfinal`. The names must be ones the
-N-body code knows (`typename` in `src/nbvars.f90`).
+N-body code knows (`typename_` in `src/params.c`).
 
 ### Add rotation, a bulk motion, or anything else to the finished system
 `userfinal`. Example 3 there adds solid-body rotation.

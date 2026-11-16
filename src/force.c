@@ -1,9 +1,9 @@
 /* ==============================================================
- * HENDOS (C version) - force.c
+ * HENDOS - HErmite N-body Dynamics Of Systems - force.c
  * GRAVITY AND TIMESTEPS: accelerations and jerks on the active bodies
  * by direct summation (with the Galactic tide), energies, and the
  * choice of each body's block timestep level.
- * (Fortran equivalents: nbforce.f90 and nbstep.f90.)
+ * (Archived Fortran equivalents: nbforce.f90 and nbstep.f90.)
  * ============================================================== */
 #include <omp.h>
 #include "hendos.h"

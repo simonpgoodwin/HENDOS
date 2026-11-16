@@ -1,22 +1,93 @@
 /* ==============================================================
- * HENDOS (C version) - ac.c
- * AHMAD-COHEN NEIGHBOUR SCHEME (switch useac) for direct summation.
- * A line-for-line counterpart of nbac.f90, where the scheme is
- * explained in full. In short: the force on a body is split into an
- * irregular part from its neighbours (summed every step, the tide
- * included) and a regular part from everything else (summed on longer
- * regular steps and extrapolated linearly in between). On a regular
- * step the Hermite corrector is applied to the regular force over the
- * whole regular step, giving the corrections dreg, dvreg that the main
- * program adds.
+ * HENDOS - HErmite N-body Dynamics Of Systems - ac.c
+ * AHMAD-COHEN NEIGHBOUR SCHEME (switch useac) for direct summation
+ * (Ahmad & Cohen 1973, J. Comp. Phys., 12, 389; Hermite form after
+ * Makino & Aarseth 1992, PASJ, 44, 141)
+ *
+ * The force on a star is split in two:
+ *   irregular force   from its neighbours (the stars inside its
+ *                     neighbour sphere, radius rs), which changes fast.
+ *                     The Galactic tide is included in it.
+ *   regular force     from all the other stars, which changes slowly
+ * Each star has two timesteps. On most steps (irregular steps) only the
+ * short sum over the neighbour list is done and the regular force is
+ * taken from its last value and derivative (linear extrapolation). On
+ * regular steps, which are 2, 4, 8... irregular steps apart, the full
+ * sum over all stars is done, a new neighbour list is made and the
+ * regular force is corrected.
+ *
+ * How it fits the Hermite scheme. The arrays f0, f1 are still the total
+ * force and its derivative, so the predictor and the corrector in the
+ * main program are unchanged:
+ *   irregular step   f0p = (neighbour sum + tide) + fr + frd*(t - treg)
+ *                    f1p = (its derivative) + frd
+ *                    the regular part is linear in time, so it drops
+ *                    out of the corrector's 2nd and 3rd derivatives,
+ *                    which are those of the irregular force alone
+ *   regular step     the same, with the OLD neighbour list, then the
+ *                    Hermite corrector is applied to the regular force
+ *                    over the whole regular step: its 2nd and 3rd
+ *                    derivatives r2, r3 give the extra corrections
+ *                      dreg  = r2 dtr^4/24 + r3 dtr^5/120   to the position
+ *                      dvreg = r2 dtr^3/6  + r3 dtr^4/24    to the velocity
+ *                    which the main program adds. Then the new list
+ *                    replaces the old one and the force is split again.
+ * The regular step is chosen from the regular force and its derivatives
+ * with the Aarseth formula and the parameter etar. It is a block step
+ * like the irregular one, never shorter than it, and regular times are
+ * always whole multiples of the regular step, so every regular time is
+ * also one of the star's irregular times.
+ *
+ * Neighbour list: stars inside rs, plus stars inside 3 rs that are
+ * approaching and will be inside rs within one regular step. rs is
+ * changed a little at every regular step to keep the number of
+ * neighbours near nnbopt. kfmax places are kept free in every list for
+ * stars that appear when a group is opened (see below).
+ *
+ * When bodies are created, removed or moved by the binary and merger
+ * routines the lists are kept correct by acmoved, acremoved and
+ * acadded; a new body has acok = 0 and gets a full force sum and
+ * a new list the first time forces is called for it.
+ * (Tested with a Python model of this scheme before it was written:
+ * a 150-star Plummer sphere over 4 N-body times gave |dE/E| = 3e-8 with
+ * etar = 0.005 and a quarter to a half of the full force sums.)
+ *
+ * OpenMP: for big blocks the active stars are shared over the threads;
+ * for small blocks the full sums and list searches are shared instead.
+ *
+ * Bodies are 0..n-1 here, and the list of body i is
+ * nbl[i*nnbmax .. i*nnbmax + nnb[i] - 1].
  * ============================================================== */
 #include <omp.h>
 #include "hendos.h"
 
 #define NACMIN 150   /* below this many stars the scheme is switched off */
 
-/* the scheme is switched off, and the user told, for fewer than NACMIN
- * stars (see accheck in nbac.f90 for where 150 comes from) */
+/* the neighbour scheme is switched off, and the user told, if there are
+ * fewer than NACMIN stars: a neighbour list is then a large part of the
+ * whole system, so the scheme costs as much as plain direct summation.
+ * Called once the number of stars is known, before acalloc.
+ *
+ * Where NACMIN = 150 comes from. A Python model of this code was run on
+ * equal-mass Plummer spheres of 30 to 800 stars with and without the
+ * scheme, with etar = 0.005 so that the energy errors were the same,
+ * and the pair interactions counted. Cost of the scheme / cost of
+ * direct summation, if a pair in a neighbour sum costs w times a pair
+ * in a full sum (neighbour sums jump about in memory and do not
+ * vectorise, so w is more than 1; 2 to 3 is a guess):
+ *        N      30    60   100   150   200   300   400   800
+ *      w = 1   1.36  0.98  0.87  0.80  0.72  0.65  0.60  0.49
+ *      w = 2   1.95  1.26  1.04  0.91  0.81  0.73  0.67  0.55
+ *      w = 3   2.54  1.55  1.21  1.01  0.89  0.80  0.74  0.60
+ * so the scheme breaks even at about 60 stars if w = 1, 110 if w = 2
+ * and 150 if w = 3. w has not been measured (the code had not been
+ * compiled when this was written).
+ *
+ * >>> CHANGE HERE (NACMIN) once the break-even has been measured with
+ *     the compiled code: benchmark/bench_kira.py --skip-kira --modes
+ *     direct neighbours at several N, compared at equal energy error
+ *
+ */
 void accheck(int nstars)
 {
     if (!useac || nstars >= NACMIN) return;

@@ -1,17 +1,16 @@
 /* ==============================================================
- * HENDOS (C version) - restart.c
+ * HENDOS - HErmite N-body Dynamics Of Systems - restart.c
  * RESTART FILES (parameters trestart and restart) - for long runs.
- * The counterpart of nbrestart.f90: the complete state of the run at
+ * The complete state of the run at
  * an output time, in binary at full precision, so that a run carried
  * on from it does what the original would have done.
  *
- * NOTE: the file has the same name as the Fortran one
- * (<runid>_restart.bin) but it is NOT the same file: a run must be
- * restarted by the version of the code that wrote the file. The C file
- * starts with the words HENDOS-C-RESTART, and the C code refuses
- * anything else.
+ * NOTE: the archived Fortran version writes a file of the same name
+ * (<runid>_restart.bin) in a different format: a run must be restarted
+ * by the code that wrote the file. This file starts with the words
+ * HENDOS-C-RESTART, and anything else is refused.
  *
- * FILE FORMAT - made to be added to, as in the Fortran. After the
+ * FILE FORMAT - made to be added to. After the
  * 16 opening characters the file is a list of sections, each
  *     name (16 characters), number of bytes (8-byte integer), the bytes
  * A reader that does not know a section skips its bytes, so a section
@@ -141,8 +140,8 @@ void readrestart(double *time, int *iout, int64_t *nblock, int64_t *nforce)
         exit(1);
     }
     if (fread(magic, 1, 16, rf) != 16 || memcmp(magic, MAGIC, 16)) {
-        printf(" ERROR: %s was not written by the C version of HENDOS.\n", fname);
-        printf("        A run must be restarted by the version (Fortran or C) that wrote "
+        printf(" ERROR: %s was not written by this version of HENDOS.\n", fname);
+        printf("        A run must be restarted by the code (C or archived Fortran) that wrote "
                "the file.\n");
         exit(1);
     }
@@ -218,7 +217,7 @@ void readrestart(double *time, int *iout, int64_t *nblock, int64_t *nforce)
         }
     }
     printf(" ==============================================================================\n");
-    printf("  HENDOS - HErmite N-body Dynamics Of Systems (C version)     run: %s\n", runid);
+    printf("  HENDOS - HErmite N-body Dynamics Of Systems     run: %s\n", runid);
     printf(" ==============================================================================\n");
     printf("  restarted from         %s\n", fname);
     printf("  time                   %14.4f Myr\n", *time);

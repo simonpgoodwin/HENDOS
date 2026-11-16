@@ -1,18 +1,16 @@
 /* ==============================================================
  * HENDOS - HErmite N-body Dynamics Of Systems
- * THE C VERSION of the main simulation code - main.c
+ * The main program - main.c
  *
- * The same integrator as the Fortran program hermite (../src), written
- * to be read side by side with it: 4th-order Hermite (Makino & Aarseth
+ * 4th-order Hermite (Makino & Aarseth
  * 1992) with block timesteps (Makino 1991), timestep = min(Aarseth,
  * pairwise free-fall/flyby), higher-order predictor, P(EC)^n, Galactic
  * tide, Ahmad-Cohen neighbour scheme, binaries / few-body groups /
  * frozen triples as one body, mergers, restart files and ensembles.
- * NOT in the C version: the Barnes-Hut tree (direct summation only).
+ * Direct summation only: the Barnes-Hut tree is only in the archived
+ * Fortran version (archive/fortran).
  *
- * usage:   ./hermite_c params.nml  [ member ]
- * The parameter file, the initial conditions and every output file are
- * the same as for the Fortran code - see CSRC_README.md.
+ * usage:   ./hermite params.nml  [ member ]
  *
  * This file is the main program only: set-up, the ensemble launcher,
  * then the loop over output intervals and blocks (predict, forces,
@@ -48,12 +46,35 @@ static void setmember(int k)
     snprintf(icfile, sizeof icfile, "%s", tmp);
 }
 
-/* run every member of the ensemble: each is a separate run of this
- * program, 'hermite_c <parameter file> <member>', with its screen
- * output in <datadir><runid>_eNNN.log; nparallel at a time. Members
- * whose log file exists have been run already and are left alone, so
- * an ensemble is made bigger just by raising nensemble (see
- * runensemble in nbsetup.f90). */
+/* run every member of the ensemble (nensemble > 1 in the parameter file
+ * and no member number on the command line).
+ *
+ * Each member is a separate run of this same program, started here as
+ *     hermite <parameter file> <member number>
+ * so the members cannot interfere with each other and nothing in the
+ * code has to be reset between them. Member k reads the initial
+ * conditions ensname(icfile,k) (as written by makeics with the same
+ * nensemble) and has the runid ensname(runid,k), so its files are
+ *     <runid>_e00k_snap_..., <runid>_e00k_ana_..., <runid>_e00k_mergers.dat
+ * and its screen output goes to <datadir>/<runid>_e00k.log.
+ * nparallel members are run at the same time; each uses OMP_NUM_THREADS
+ * threads, so nparallel x OMP_NUM_THREADS should not be more than the
+ * number of cores. For small N, many members with one thread each is
+ * by far the best use of a machine.
+ * A member can also be run on its own in the same way by hand (or as
+ * one job of a job array on a cluster):   ./hermite params.nml 7
+ *
+ * ADDING MEMBERS LATER. An ensemble can be made bigger at any time:
+ * make the extra initial conditions (makeics with the larger nensemble
+ * and ensfirst = the first new member), raise nensemble here and run
+ * again. Members that have been run already - those whose log file
+ * exists - are left alone and only the new ones are run, so nothing
+ * else has to be changed. (ensfirst in &run does the same by hand:
+ * only members ensfirst to nensemble are looked at.) The members of an
+ * ensemble need not all have been run with the same nensemble; the
+ * analysis tools take the ensemble to be all the members they find.
+ * To run a member again, delete its files first.
+ */
 static void runensemble(const char *exe)
 {
     char name[NSTR], path[3 * NSTR], ic1[NSTR], ic2[NSTR];
@@ -64,7 +85,7 @@ static void runensemble(const char *exe)
     ensname(icfile, 1, ic1);
     ensname(icfile, nensemble, ic2);
     printf(" ==============================================================================\n");
-    printf("  HENDOS - HErmite N-body Dynamics Of Systems (C version)     ensemble: %s\n", runid);
+    printf("  HENDOS - HErmite N-body Dynamics Of Systems     ensemble: %s\n", runid);
     printf(" ==============================================================================\n");
     printf("  members                %14d\n", nensemble);
     if (ensfirst > 1) printf("  starting at member     %14d\n", ensfirst);

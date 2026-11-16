@@ -155,8 +155,9 @@ parameter file as the original run; `tend` may be increased to extend a run
 that has finished. The run then continues exactly as it would have done:
 the restart file holds everything, including timesteps, binaries and the
 energy the run started with, so the energy error keeps counting from the
-original start. The switches `usetree`, `useac` and `fewbody` must be the same
-as when the file was written. See `trestart` for writing the file.
+original start. The switches `useac` and `fewbody` must be the same as when
+the file was written. A restart file can only be read by the code that wrote
+it (the C code or the archived Fortran). See `trestart` for writing the file.
 
 ## `&output` - where output goes and how much
 
@@ -181,7 +182,7 @@ How much is written to the screen.
 - `'verbose'`: also every parameter, a description of the initial conditions,
   and at every `tout` a block with the energies, energy errors, Lagrangian
   radii, centre-of-mass drift, numbers of steps, the table of timestep levels,
-  binaries, tree and speed. For testing.
+  groups, mergers and speed. For testing.
 
 Warnings are written in both.
 
@@ -266,12 +267,10 @@ A faster way of doing direct summation. The force on a star is split into the
 part from its nearest neighbours, which changes quickly, and the part from all
 the other stars, which changes slowly. The neighbour part is summed every
 step; the full sum over all stars is done only every few steps, and in between
-the slow part is extrapolated. It is for runs without the tree and is worth
-using above a thousand stars or so. The saving grows with N.
+the slow part is extrapolated. It is worth using above a thousand stars or so. The saving grows with N.
 
 ### `useac` (switch, standard value `.false.`)
-`.true.` uses the neighbour scheme. It is switched off, with a warning, if
-`usetree` is on.
+`.true.` uses the neighbour scheme.
 With fewer than 150 stars the code switches the neighbour scheme off, says so
 on the screen at the start, and carries on with plain direct summation: for so
 few stars a neighbour list is a large part of the whole system and the scheme
@@ -281,7 +280,7 @@ scheme costs 1.36 times direct summation at 30 stars, 0.98 at 60, 0.87 at 100,
 0.72 at 200, 0.60 at 400 and 0.49 at 800, and a neighbour sum costs more per
 pair than a full sum, which moves the break-even from 60 up to somewhere
 between 110 and 150. It should be measured with the compiled code and changed
-if need be: it is `nacmin` in `accheck` in `src/nbac.f90`.
+if need be: it is `NACMIN` in `src/ac.c`.
 
 ### `nnbopt` (whole number, standard value 0)
 The number of neighbours wanted for each star. 0 sets it automatically to
@@ -300,7 +299,11 @@ slower. If the energy error with the neighbour scheme is worse than without
 it, reduce `etar` first: in tests halving it twice (0.02 to 0.005) reduced the
 energy error by about 200.
 
-## `&tree` - Barnes-Hut tree forces
+## `&tree` - Barnes-Hut tree forces (archived Fortran version only)
+**The tree is only in the archived Fortran version** (`archive/fortran`). The
+N-body code in use (C) stops with a message if `usetree = .true.`, and
+ignores the other three parameters.
+
 For large numbers of particles. Instead of summing the force from every other
 particle, distant groups of particles are replaced by a few terms describing
 the group. Energies are still calculated exactly.
@@ -395,7 +398,7 @@ and in particular nothing like the 150 of the neighbour scheme: the saving is
 N divided by the square of the group size, not N divided by the number of
 neighbours. Accuracy does not depend on N at all. A stable triple is taken
 out whatever N is, because once frozen it costs nothing. The factor is
-`nfewfac` in `src/nbbin.f90`, to be changed when it has been measured with the
+`NFEWFAC` in `src/groups.c`, to be changed when it has been measured with the
 compiled code.
 
 ### `gfew` (standard value 1.0e-5)
@@ -476,9 +479,7 @@ is about 9e-8 yr, so the limit should never be reached in practice.
 ## `&computing` - performance only (these do not change the results)
 Set the number of cores before running with `export OMP_NUM_THREADS=8`.
 The number in use is printed at the start of the run. All the expensive parts
-of the code use every core, except building the tree, which is shared out
-between at most 8 cores (one for each of the eight boxes the whole system is
-first cut into) - 2, 4 or 8 cores share that work evenly.
+of the code use every core.
 
 ### `nompmin` (standard value 32)
 When at least this many particles are being moved in one step, the cores share

@@ -1,11 +1,11 @@
 /* ==============================================================
- * HENDOS (C version) - io.c
+ * HENDOS - HErmite N-body Dynamics Of Systems - io.c
  * INPUT AND OUTPUT: the data directory, the initial conditions, the
  * screen, diagnostics, snapshots and the in-run analysis file.
- * The files written are the same as those of the Fortran version
- * (nbsetup.f90, nbout.f90, nbana.f90): the same names, header keys and
- * columns, so every tool that reads one reads the other. The creator
- * line in the headers says which code wrote the file.
+ * The formats are described in README.md. They are the same as those
+ * of the archived Fortran version (nbsetup.f90, nbout.f90, nbana.f90),
+ * so every tool reads files from either; the creator line in each
+ * header says which code wrote the file.
  * ============================================================== */
 #include <omp.h>
 #include <sys/stat.h>
@@ -19,6 +19,8 @@ static FILE *flagr = NULL;
 static double efrozennow = 0.0;   /* efrozen + what unfreezing every triple now would add */
 static const char *DLINE =
     " ==============================================================================";
+static const char *SLINE =
+    " ------------------------------------------------------------------------------";
 
 double walltime(void) { return omp_get_wtime() - clock0; }
 void startclock(void)
@@ -326,6 +328,16 @@ static void typecounts(char *out)
         if (cnt[k] > 0) sprintf(out + strlen(out), "%s%s %d", out[0] ? " " : "", typename_[k], cnt[k]);
 }
 
+/* table of the occupied timestep levels (verbose screen output) */
+static void writelevels(void)
+{
+    int hist[64] = {0};
+    for (int i = 0; i < n; i++) hist[lev[i]]++;
+    printf("   timestep levels       level      step (yr)       stars\n");
+    for (int k = 0; k <= kmax; k++)
+        if (hist[k] > 0) printf("%22s%6d%15.4E%12d\n", "", k, tout * 1.e6 / ldexp(1.0, k), hist[k]);
+}
+
 /* screen output at the start of the run; sets the energy the error is
  * measured from */
 void startinfo(int nout)
@@ -339,7 +351,7 @@ void startinfo(int nout)
     restartcounters(0, 0);
     typecounts(tc);
     printf("%s\n", DLINE);
-    printf("  HENDOS - HErmite N-body Dynamics Of Systems (C version)     run: %s\n", runid);
+    printf("  HENDOS - HErmite N-body Dynamics Of Systems     run: %s\n", runid);
     printf("%s\n", DLINE);
     printf("  initial conditions     %s  (%s)\n", icfile, icformat);
     printf("  particles              %14d\n", ntot);
@@ -360,12 +372,52 @@ void startinfo(int nout)
     printf("  half-mass radius       %14.4f pc\n", rlag[1]);
     printf("  velocity dispersion    %14.4f km/s\n", sig3d * vunit);
     if (lverbose) {
-        printf("  parameters:  eta %g  etap %g  etas %g  niter %d  kmax %d  eps %g pc\n", eta, etap,
-               etas, niter, kmax, eps);
-        printf("               closebinaries %d  fewbody %d  gclose %g  gopen %g  gfew %g  "
-               "etafew %g\n", closebinaries, fewbody, gclose, gopen, gfew, etafew);
-        printf("               rcoll %g Rsun  mergers %d  useac %d  etar %g  trestart %g Myr\n",
-               rcoll, mergers, useac, etar, trestart);
+        double mt = 0.0, mmin = HUGE_VAL, mmax = 0.0, v2 = vunit * vunit;
+        for (int i = 0; i < n; i++) {
+            mt += m[i];
+            int k = ib[i];
+            for (int l = 0; l < (k < 0 ? 1 : bnum[k]); l++) {
+                double ml = k < 0 ? m[i] : bmass[k][l];
+                mmin = fmin(mmin, ml);
+                mmax = fmax(mmax, ml);
+            }
+        }
+        printf("%s\n", SLINE);
+        printf("  PARAMETERS from %s\n", pfilename);
+        printf("    eta %g   etap %g   etas %g   niter %d   kmax %d (shortest step %.3E yr)\n",
+               eta, etap, etas, niter, kmax, tout * 1.e6 / ldexp(1.0, kmax));
+        printf("    eps %g pc   nompmin %d   nompj %d   dewarn %g\n", eps, nompmin, nompj, dewarn);
+        printf("    closebinaries %d   dtclose %g yr   gclose %g   gopen %g\n", closebinaries,
+               dtclose, gclose, gopen);
+        printf("    fewbody %d   gfew %g   etafew %g\n", fewbody, gfew, etafew);
+        printf("    rcoll %g Rsun   mergers %d\n", rcoll, mergers);
+        if (useac) printf("    useac 1   nnbopt %d   nnbmax %d   etar %g\n", nnbopt, nnbmax, etar);
+        else printf("    useac 0\n");
+        printf("    trestart %g Myr (0 = no restart files)\n", trestart);
+        if (ltide) {
+            double fconv = 1.0 / (vunit * 1.e3);
+            printf("    Omega %.4f km/s/kpc   T diagonal %.2f %.2f %.2f (km/s/kpc)^2\n",
+                   omega / fconv, ttid[0][0] / (fconv * fconv), ttid[1][1] / (fconv * fconv),
+                   ttid[2][2] / (fconv * fconv));
+        }
+        printf("%s\n", SLINE);
+        printf("  INITIAL CONDITIONS\n");
+        printf("    c.o.m. shift            %12.4E%12.4E%12.4E pc\n", comshift[0], comshift[1],
+               comshift[2]);
+        printf("    c.o.m. velocity shift   %12.4E%12.4E%12.4E km/s\n", covshift[0], covshift[1],
+               covshift[2]);
+        printf("    mass min, mean, max     %12.4E%12.4E%12.4E Msun\n", mmin, mt / ntot, mmax);
+        printf("    total mass              %12.4f Msun\n", mt);
+        printf("    Lagrangian 10,50,90%%    %12.4f%12.4f%12.4f pc\n", rlag[0], rlag[1], rlag[2]);
+        printf("    kinetic, potential      %12.4E%12.4E Msun km2/s2\n", ekin * v2, epot * v2);
+        if (ltide) printf("    tidal energy            %12.4E Msun km2/s2\n", etid * v2);
+        /* crossing time 2 r_h / sigma_3D, Spitzer half-mass relaxation time */
+        printf("    crossing time 2r_h/sig  %12.4f Myr\n", 2.0 * rlag[1] / sig3d * tunit);
+        if (ntot > 10)
+            printf("    half-mass relaxation    %12.4f Myr\n",
+                   0.138 * sqrt((double)ntot) * pow(rlag[1], 1.5) / sqrt(mt / ntot)
+                       / log(0.11 * ntot) * tunit);
+        writelevels();
     }
     printf("%s\n", DLINE);
     fflush(stdout);
@@ -409,6 +461,7 @@ void statusout(int iout, int nout, double time, int64_t nblock, int64_t nforce)
         printf("   this interval   blocks  %12lld   star steps%14lld\n", (long long)nbi,
                (long long)nfi);
         if (nbi > 0) printf("                   mean stars per block%12.1f\n", (double)nfi / nbi);
+        writelevels();
         printf("   steps held at kmax this interval %lld\n", (long long)(nclamp - nclamp0));
         if (closebinaries)
             printf("   groups as one body      %d   (binaries closed %lld, opened %lld this interval)\n",
@@ -479,7 +532,7 @@ void hdrcommon(FILE *f)
     double mt = 0.0;
     strftime(date, sizeof date, "%Y-%m-%d %H:%M:%S", localtime(&now));
     for (int i = 0; i < n; i++) mt += m[i];
-    hdrs(f, "creator", "HENDOS C version (csrc)");
+    hdrs(f, "creator", "HENDOS (C, src/main.c)");
     hdrs(f, "date", date);
     hdrs(f, "runid", runid);
     if (ensmember > 0) {
@@ -648,7 +701,28 @@ void snapshot(double time, int64_t nforce)
     if (lverbose) printf("   snapshot written: %s\n", fname);
 }
 
-/* ---- in-run analysis: <runid>_ana_lagrangian.dat ----------------- */
+/* ---- IN-RUN ANALYSIS ----------------------------------------------
+ * Each analysis has an on/off switch in the &analysis section of the
+ * parameter file and writes its own file  <runid>_ana_<name>.dat (in
+ * the data directory) with a metadata header (same style as the
+ * snapshots) followed by one line per analysis time. Analyses are done
+ * every tana Myr, a multiple of tout, so all stars are synchronised.
+ * On a restart existing files are appended to rather than overwritten.
+ * ana_do is called just after statusout, so the diagnostics (cm, rlag,
+ * sig3d) are up to date and can be used without recomputing them.
+ * Energies (direct-N, expensive) are not computed by analyses.
+ *
+ * >>> TO ADD A NEW ANALYSIS <name>:
+ *   1. add an int switch <name> to hendos.h, a line for it in the
+ *      params[] table in params.c with its default in readparams, and
+ *      a line in run/params.nml
+ *   2. add a FILE * for it next to flagr at the top of this file
+ *   3. open it and write its header in ana_init (copy the lagrangian
+ *      block)
+ *   4. write its line in ana_do
+ *   5. close it in ana_end
+ *   6. add its file to the check in checkrunid (bottom of this file)
+ * ------------------------------------------------------------------ */
 static void ananame(const char *name, char *fname)
 {
     sprintf(fname, "%s%s_ana_%s.dat", datadir, runid, name);

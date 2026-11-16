@@ -5,7 +5,7 @@ are known and checks each result against a tolerance. Run it after every
 change to the code and before trusting a production run.
 
 ```
-cd HENDOS/run && make          # the tests use run/hermite
+cd HENDOS/run && make hermite  # the tests use run/hermite
 cd ../tests
 python3 run_tests.py                 # all the tests
 python3 run_tests.py --list          # what the tests are
@@ -13,11 +13,12 @@ python3 run_tests.py --only merger   # tests whose name contains 'merger'
 python3 run_tests.py --keep          # keep the working files (in tests/work)
 python3 run_tests.py --dry           # write the input files, run nothing
 python3 run_tests.py --hermite /path/to/another/hermite
-python3 run_tests.py --hermite ../run/hermite_c   # the C version (make hermite_c)
+python3 run_tests.py --hermite ../archive/fortran/run/hermite_fortran   # the archived Fortran
 ```
 
-On the C version every test passes except `plummer_tree`, which fails by
-design because the C version has no tree.
+A test that needs something the executable does not have is reported as SKIP
+rather than FAIL, and is not counted. At present that means `plummer_tree`
+with the C code, which has no tree. It runs with the archived Fortran.
 
 It needs Python 3 with numpy, and uses `analysis/hendosio.py` to read the
 snapshots. Each test makes its own initial conditions, so `makeics` is not
@@ -25,7 +26,7 @@ needed. Set `OMP_NUM_THREADS` as for a normal run. The whole set should take
 a few minutes. The exit status is 0 if everything passed, so it can be used in
 a script.
 
-Each test prints PASS or FAIL and, underneath, every number it checked with
+Each test prints PASS, FAIL or SKIP and, underneath, every number it checked with
 its limit:
 
 ```
@@ -60,10 +61,10 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 
 The limits are deliberately loose enough not to fail for harmless reasons
 (a different compiler or number of threads) and tight enough to catch a real
-mistake. **They were set from tests of the algorithms in Python, before the
-Fortran had been compiled, so the first real run may show that some need
-adjusting** - tighten any that pass with a lot to spare, and note the values
-your build gives so that later changes can be compared with them.
+mistake. They were first set from tests of the algorithms in Python, and
+have since been checked against runs of the C code (which passes all of them
+with room to spare). Tighten any that pass with a lot to spare, and note the
+values your build gives so that later changes can be compared with them.
 
 ## Adding a test
 
@@ -77,6 +78,8 @@ automatically. `t` is a `Tester`:
   the run: `.last` is the last snapshot (a `hendosio.Snapshot`), `.snaps` the
   snapshot files, `.log` the screen output, `.file('_mergers.dat')` any other
   file of the run.
+- `raise Skipped('why')` marks the test as skipped, for when the executable
+  does not have what the test needs (see `test_plummer_tree`).
 - `t.check(what, value, limit)` passes if |value| < limit;
   `t.check(what, value, expected, 'equal')` passes if they are equal.
 

@@ -1,384 +1,315 @@
 # HENDOS source code - what is where
 
-Each file is one Fortran module that does one job. The main program
-(`hermite.f90`) only contains the integration loop; everything else is in the
-modules. `(internal)` marks a routine contained inside the one above it.
-A C version with the same routine names (except the tree) is in `../csrc`
-(see `csrc/CSRC_README.md`), so this guide covers both.
+The N-body code `hermite` is written in C, in the files below. The initial
+conditions generator `makeics` is written in Fortran, in `ics/`. The
+original Fortran N-body code is kept in `../archive/fortran`. It is the only
+version with the Barnes-Hut tree (see `../archive/fortran/README.md`).
 
-**Keep this file up to date: when a routine is added, moved, renamed or changes
+**Keep this file up to date: when a function is added, moved, renamed or changes
 what it does, change its entry here in the same edit.**
 
-## Files, in the order they are compiled
+## Files
 
-| File | Module | Job | Uses |
-|---|---|---|---|
-| `nbvars.f90`  | `nbvars`  | shared data: parameters, particle arrays, particle types | - |
-| `nbsetup.f90` | `nbsetup` | set-up and input: units, parameter file, data directory, initial conditions | nbvars |
-| `nbtree.f90`  | `nbtree`  | Barnes-Hut tree | nbvars |
-| `nbac.f90`    | `nbac`    | Ahmad-Cohen neighbour scheme | nbvars |
-| `nbforce.f90` | `nbforce` | gravity: forces, jerks, tide, energies | nbvars, nbtree, nbac |
-| `nbstep.f90`  | `nbstep`  | timesteps: starting steps and block timestep levels | nbvars, nbtree, nbac, nbforce |
-| `nbfew.f90`   | `nbfew`   | few-body integrator and triple stability test (stand-alone) | - |
-| `nbbin.f90`   | `nbbin`   | binaries, few-body groups, collisions and mergers | nbvars, nbtree, nbac, nbforce, nbstep, nbfew |
-| `nbout.f90`   | `nbout`   | output: screen, diagnostics, snapshots | nbvars, nbforce, nbbin |
-| `nbrestart.f90` | `nbrestart` | binary restart files | nbvars, nbsetup, nbac, nbout |
-| `nbana.f90`  | `nbana`  | in-run analysis files | nbvars, nbout |
-| `hermite.f90` | program `hermite` | main program: the integration loop | all of the above |
-| `ics/makeics.f90` | program `makeics` | the initial conditions generator | the five files below |
-| `ics/plummersubs.f90` | (no module) | Plummer sphere: `makeplummer` | icrandom |
-| `ics/fractalsubs.f90` | (no module) | box fractals: `makefractal`, `larsonfractal` | icrandom |
-| `ics/masssubs.f90` | (no module) | stellar masses: `maschberger` | icrandom |
-| `ics/usersubs.f90` | (no module) | the user's own code: `userstructure`, `usermasses`, `userfinal` | icrandom |
-| `ics/icrandom.f90` | (no module) | random numbers: `ran3`, `gasdev` | - |
+| File | Job |
+|---|---|
+| `hendos.h` | everything shared: constants, parameters, particle arrays, groups, neighbour-scheme arrays, prototypes |
+| `main.c` | the main program: set-up, the ensemble launcher, the integration loop |
+| `params.c` | units, the parameter-file reader, parameter checks, small helpers |
+| `io.c` | input and output: initial conditions, diagnostics, screen, snapshots, headers, in-run analysis |
+| `force.c` | gravity: forces, jerks, tide, energies; timestep levels |
+| `ac.c` | the Ahmad-Cohen neighbour scheme |
+| `few.c` | the few-body integrator and the triple stability test (stand-alone) |
+| `groups.c` | binaries, few-body groups, frozen triples, collisions and mergers |
+| `restart.c` | binary restart files |
+| `ics/makeics.f90` and the five files with it | the initial conditions generator (Fortran) |
 
-The compile order and dependencies are in `run/Makefile`; a new module must be
-added to `MODS` there (in the right place) with a line saying what it uses.
+They are built by `run/Makefile`. A new C file has to be added to `CFILES`
+there.
 
-## nbvars.f90 - shared data
-No calculations: declarations of everything shared between modules.
-- **particle type table**: `ntypes`, `typename` (the names used in files) and
-  the named codes `tstar`, `twdwarf`, `tnstar`, `tbhole`, `tplanet`. Adding a
-  type means changing only this table.
-- **parameters** read from the parameter file (all described in
-  `run/PARAMS_README.md`).
-- **derived and internal values**: unit conversions, tide in internal units,
-  counters, block-timestep clock.
-- **particle arrays**: positions, velocities, force derivatives, masses, ids,
-  types (`itype`), timestep levels; and the table of closed binaries
-  (`bmass`, `bident`, `btype`, `brel`, `bepoch`), now a table of *groups*:
-  binaries, few-body groups and frozen triples (`bnum`, `bmode`, `bx`, `bv`,
-  `brel2`), with up to `kfmax` = 6 stars each; and the arrays of the neighbour
-  scheme (split forces, neighbour lists, regular steps).
-- `typecode(name)` - function: the integer code of the particle type called
-  `name` (any case), or 0 if there is no such type.
+## Conventions
 
-## nbsetup.f90 - set-up and input (everything done once at the start)
-- `setunits` - sets the conversions between internal units (G = 1, Msun, pc)
-  and km/s and Myr.
-- `readparams(pfile)` - sets the standard value of every parameter, reads the
-  namelist sections of the parameter file, checks the values, and converts the
-  tide and a few others to internal units.
-  - `nmlerror(name)` (internal) - stops with the compiler's message if a
-    section is wrong; notes sections that are missing.
-  - `safename(str)` (internal) - true if a name has only letters, digits, - _ .
-- `checkdatadir` - makes the data directory if needed and stops if files
-  cannot be written there.
-- `ensname(name,k)` - function: the name of member `k` of an ensemble (`_e007`
-  put before the extension, or at the end if there is none).
-- `setmember(k)` - makes this run member `k` of the ensemble: its runid and
+- **Arrays start at 0.** Body `i` runs from 0 to `n`−1, and a group index from 0
+  to `nbin`−1. "No group" or "no body" is −1.
+- **Vectors are `double[3]`** (`typedef double vec3[3]`), so `r[i][0]` is x of
+  body `i`. The neighbour list of body `i` is `nbl[i*nnbmax + k]`,
+  k = 0 to `nnb[i]`−1.
+- **Every shared variable is declared once, in `hendos.h`.** The `EXT` macro
+  makes each declaration a definition in `main.c` (which has
+  `#define HENDOS_MAIN`) and `extern` everywhere else.
+- **Units.** Internally G = 1, mass in Msun and length in pc, so the velocity
+  unit is 0.06558 km/s and the time unit 14.91 Myr. All input and output is in
+  Msun, pc, km/s and Myr. The conversions (`vunit`, `tunit`) are only used
+  when reading and writing.
+- **Block times** are 8-byte integers (`int64_t`) in units of
+  `tick = dtmax/2^kmax`, so they are exact. The integer clock goes back to zero
+  at every output time, when everyone is synchronised.
+- Places you are likely to want to change are marked `>>> CHANGE HERE`.
+
+## hendos.h - shared data
+No calculations, only declarations of everything shared between the files:
+- the particle type table (`NTYPES`, `typename_`, codes `TSTAR`, `TWDWARF`,
+  `TNSTAR`, `TBHOLE`, `TPLANET`). To add a type, increase `NTYPES` and add its
+  name to `typename_` in `params.c`. Nothing else changes.
+- the parameters read from the parameter file (all described in
+  `run/PARAMS_README.md`), derived values, counters and the block clock
+- the particle arrays: positions, velocities, force derivatives, masses, ids,
+  types (`itype`), group index (`ib`), timestep levels
+- the table of groups (binaries, few-body groups, frozen triples):
+  `bnum`, `bmode`, `bmass`, `bident`, `btype`, `brel`, `brel2`, `bx`, `bv`,
+  `bepoch`, `bein`, with up to `KFMAX` = 6 stars each
+- the neighbour-scheme arrays (split forces, neighbour lists, regular steps)
+- the prototype of every function used outside its own file, and the
+  helpers `dot3`, `norm3`
+
+## main.c - the main program
+- `setmember(k)` - makes this run member `k` of an ensemble. Its runid and its
   initial conditions file get the member number.
-- `runensemble` - runs every member of an ensemble, `nparallel` at a time, each
-  as a separate run of `hermite` with its screen output in its own log file.
-  Members that have been run before are left alone, so members can be added
-  to an ensemble by raising `nensemble`.
-- `allocarrays` - allocates all the particle and binary arrays.
-- `readic` - reads the initial conditions (NBODY-SNAPSHOT 2 with types,
-  version 1 without, or legacy `m x y z vx vy vz`), sets ids and types,
-  converts velocities to internal units and moves to the centre-of-mass frame.
+- `runensemble(exe)` - runs every member of an ensemble, `nparallel` at a
+  time. Each is a separate run of `hermite`, with its screen output in its
+  own log file. Members that have been run before are left alone, so an
+  ensemble grows when `nensemble` is raised.
+- `main` - reads the parameter file (`setunits`, `readparams`,
+  `checkdatadir`). For an ensemble it either calls `runensemble` and stops,
+  or, given a member number on the command line, calls `setmember`. Then it
+  calls `readic` (or `readrestart`), `accheck`, `firststep`, `collcheck`,
+  `binstart`, `startinfo` and writes the first snapshot and analysis. Then
+  comes the loop over output intervals, and inside it the loop over blocks:
+  1. find the next block time and the active bodies
+  2. predict every body to that time (with each body's 2nd and 3rd force
+     derivatives from its last step)
+  3. `forces`, then correct the active bodies (`niter` times). A body on a
+     regular step of the neighbour scheme also gets its regular correction.
+  4. accept the step (`acaccept`) and choose new levels (`newlevel`,
+     `aclevel`)
+  5. `collcheck` and `bincheck`
 
-## nbtree.f90 - Barnes-Hut tree (only used when `usetree` is on)
-- `treealloc` - allocates the node arrays.
-- `treebuild` - builds the octree for the current predicted positions, then
-  calls `treemoments`. The root's eight octants are built in parallel, one
-  per thread (2, 4 or 8 threads share them evenly; no more than 8 are used):
-  each thread looks through all the bodies for those in its octant and builds
-  that subtree in its own region of the node arrays; the regions are then
-  closed up, so the tree is identical to a serial build.
-- `buildnode(...)` - recursive: sorts a node's bodies into octants and makes
-  its children. Thread safe (its node counter is an argument).
-- `octant(x,centre)` - function: which of the 8 octants a position is in.
-- `treemoments` - mass, centre of mass, quadrupole and octupole moments,
-  velocity and size of every node (leaves from bodies, then parents from
-  children). Called every block; cheaper than a rebuild. Parallel over the
-  leaves, then over the top-level subtrees for the internal nodes.
-- `nodemoments(node)` - the moments of one internal node from its children.
-- `addpoint(...)` - adds one body to a leaf's moments.
-- `shiftadd(...)` - adds a child's moments to its parent's (parallel-axis shift).
-- `treeforce(i,...)` - acceleration, jerk, shortest pairwise timescale and
-  nearest-neighbour distance for body `i` by walking the tree.
-- `octc(...)` - the octupole contraction used by `treeforce`.
-- `treeperturb(...)` - tidal perturbation sum on a binary from the tree.
-- `treenearest(i,jn)` - nearest body to body `i` from the tree.
+  At the end of each output interval it calls `statusout`, `snapshot`,
+  `ana_do` and `writerestart`, and at the end `ana_end` and `endinfo`.
+  With the environment variable `HENDOS_TRACE="t1 t2"` it prints every
+  block between t1 and t2 Myr in which the total energy changed by more than
+  1e-7 (debugging only, because it costs an O(N²) sum per block).
 
-## nbac.f90 - Ahmad-Cohen neighbour scheme (only used when `useac` is on)
-The scheme is explained at the top of the file.
-- `accheck(nstars)` - switches the scheme off, and says so, if there are
-  fewer than 150 stars.
-- `acalloc` - chooses the list sizes if they were left automatic and
-  allocates the arrays.
-- `acsetrs0` - first guess of the neighbour-sphere radius.
-- `acforce(i,inpar)` - the force on active star `i`: an irregular step
-  (neighbour sum plus the extrapolated regular force), a regular step (full
-  sum, regular-force corrector, new neighbour list) or the first full sum of
-  a new body.
-- `pairsum(...)` - adds the force of one star on another (the same pair
-  interaction as in `forces`).
-- `nbsum(i,nl,list,...)` - force on `i` from the stars in a list.
-- `fullsum(i,par,...)` - force on `i` from all stars, shared over the threads
-  if `par`.
-- `actide(i,a,jk)` - adds the Galactic tide to a total force and jerk.
-- `aclist(i,par,init,nl,newl)` - makes a new neighbour list and adjusts the
-  sphere radius towards `nnbopt` neighbours.
-- `acmoverow(src,dst)` - copies a body's neighbour-scheme data to another slot.
-- `acmoved(src,dst)`, `acremoved(j,irep)`, `acadded(jn,i0)` - keep every
-  list correct when a body is moved, removed or created.
+## params.c - set-up and the parameter file
+- `die(msg)`, `xalloc(n)` - stop with a message; `malloc` that stops if it
+  fails.
+- `setunits` - the conversions between internal units and km/s, Myr.
+- `ensname(name,k,out)` - the name of member `k` of an ensemble: `_e007` goes
+  before the extension, or at the end if there is none. `makeics` uses the
+  same rule, so keep the two the same.
+- the parameter table `params[]` - one line per parameter: section, name,
+  type, where it is stored. **>>> A new parameter is one line here, plus its
+  standard value and checks in `readparams`.**
+- `parsefile(pfile)` - reads the parameter file. It understands what a
+  Fortran namelist file holds: `&section`, `name = value` separated by commas
+  or new lines, `!` comments, `/` at the end of a section, `.true./.false.`
+  (or `T/F`), `1.0d-3`, text in ' or ", and `tij(i,j)`. A name that is not a
+  parameter of its section stops the run with an error.
+  - `lower`, `getreal`, `getlogical`, `setparam` (internal) - its pieces.
+- `safename(s)` - true if a name has only letters, digits, - _ and .
+- `readparams(pfile)` - sets the standard value of every parameter, reads the
+  file, checks the values and converts the tide and a few others to internal
+  units. `usetree = .true.` stops the run, because there is no tree in this
+  version.
 
-## nbforce.f90 - gravity
-- `forces` - acceleration and jerk on every active particle from all the
-  others at their predicted positions: the tree if `usetree`, otherwise direct
-  summation (two OpenMP versions, for big and small blocks). Also returns the
-  shortest pairwise free-fall/flyby time and nearest-neighbour distance.
-  - `finish(...)` (internal) - adds the Galactic tide and Coriolis terms and
-    stores the results for one particle.
-- `energy(ke,pot,ptid)` - kinetic, potential and tidal energy of the whole
-  system (direct sum), and the potential `phi` of every particle.
-
-## nbstep.f90 - timesteps
-- `firststep` - forces on everyone at the start and each particle's first
-  timestep level.
-- `newlevel(i)` - new timestep level of particle `i` after its step: the
-  smaller of the Aarseth criterion and the pairwise criterion, with the block
-  rules (down by any amount, up one level only when the time allows).
-- `commlev(k,t8)` - function: nearest timestep level that fits the block
-  structure at the current time.
-- `acstart(i)`, `acaccept(i)`, `aclevel(i)` - neighbour scheme: start the
-  regular step of a new body; keep the new split forces when a step is
-  accepted; choose the regular timestep level after `newlevel`.
-- `getlevel(dtw,k)` - turns a wanted timestep into a level (power of two of
-  `tout`), limited by `kmax`; counts steps held at the limit.
-
-## nbfew.f90 - few-body tools (stand-alone: no other module is used)
-- `fewacc(...)` - accelerations and jerks of the stars of a group from each
-  other, the shortest pairwise timescale and the closest pair.
-- `fewint(nm,mm,x,v,tint,...)` - integrates an isolated group for a given
-  time: 4th-order Hermite, one shared timestep. Stops early if two stars
-  collide.
-- `elements(mu,rr,vr,a,ecc,h)` - semi-major axis, eccentricity and angular
-  momentum of a two-body orbit.
-- `hierarchy(...)` - is a triple a stable hierarchy (Mardling & Aarseth
-  2001)? Returns the inner pair, the outer star and the two orbits.
-
-## nbbin.f90 - binaries, few-body groups, collisions and mergers
-How groups are closed, opened and frozen is explained at the top of the file.
-
-Kepler orbits and groups
-- `grpeint(nm,mm,xm,um)` - function: internal energy of a few stars (used for
-  the energy bookkeeping of frozen triples).
-- `kepler(mu,r0,v0,dt,r1,v1)` - advances a bound two-body orbit by `dt` exactly.
-  (Kepler's equation is solved by safeguarded Newton iteration in a bracket of
-  ±2 about the mean-anomaly change, which always holds the root.)
-- `bincomp(k,...)` - positions and velocities of the two stars of binary `k`.
-- `grpcomp(k,xc,vc,tnow,nm,xm,um)` - positions and velocities of the stars
-  of any group `k` now (binary, few-body group or frozen triple).
-- `fewadvance(k,xc,vc,tnow)` - brings the integration of few-body group `k`
-  up to date, merging stars inside it that collide.
-- `pairorbit(...)` - binding energy and apocentre of a pair.
-- `pericentre(...)` - function: two-body pericentre distance of a pair.
-
-Collisions and mergers
-- `collision(i,j,...)` - prints the collision alert and stops the run (used
-  when `mergers` is off).
-  - `collstar(l)` (internal) - prints the id, mass and type of one body.
-- `mergetype(t1,t2)` - function: the type of the star made by a merger.
-- `mergelog(...)` - announces a merger on the screen and adds a line to
-  `<runid>_mergers.dat`.
-- `mergestars(i,j,t8,tnow)` - merges two single stars into one.
-- `collcheck(t8,tnow)` - after each block, tests active bodies that came close
-  to another for a collision (within `rcoll`) and merges them or stops.
-
-Finding neighbours and perturbations
-- `gperturb(...)` - the perturbation gamma on a group from all other bodies.
-- `grpgamma(i,tnow,gam)` - gamma of the existing group whose c.o.m. is `i`.
-- `nearest(i,jn)` - nearest body to body `i`.
-- `nearestx(i,jex,jn)` - the same, not counting body `jex`.
-
-Closing and opening
-- `moverow(src,dst)` - copies all the data of one body to another slot.
-- `startbody(nl,list,t8,levmin)` - forces and first timesteps of new bodies.
-- `closegroup(nm,list,mode,...)` - replaces `nm` stars by one c.o.m. body.
-- `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars.
-- `pairstate(i,j)` - function: 0 nothing, 1 the pair can be closed as a
-  binary. (A pair whose pericentre is inside `rcoll` is never closed; it is
-  merged by `collcheck` when the stars meet.)
-- `tryfew(nb,bod,t8,tnow,formed)` - makes a few-body group of some bodies if
-  it would be isolated and there are enough bodies in the main integration
-  for it to pay (or it is a stable triple, which is frozen at once).
-- `tryfreeze(k)` - freezes a few-body group of three if it is a stable triple,
-  and records its true internal energy then (`bein`). `opengroup` adds the
-  change in that energy to `efrozen` when the triple is unfrozen.
-- `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
-  among the bodies that have just stepped.
-- `binstart(tnow)` - closes binaries, merges touching pairs and makes
-  few-body groups in the initial conditions.
-
-## nbout.f90 - output
-Small tools
-- `hms(sec)` - function: seconds as h:mm:ss.
-- `walltime()` - function: wall-clock seconds since the integration started.
-- `typecounts()` - function: text giving the number of each particle type.
-- `indexsort(nn,a,idx)` - index that sorts an array (heapsort).
-- `datestamp()` - function: date and time as text.
-- `physlist()` - function: the physics switched on, for the header key
-  `physics`. **New physics adds its word here.**
+## io.c - input and output
+Set-up
+- `checkdatadir` - makes the data directory if needed, and stops if files
+  cannot be written there.
+- `allocarrays` - allocates the particle and group arrays.
+- `readic` - reads the initial conditions: NBODY-SNAPSHOT 2 with types,
+  version 1 without, or the legacy `m x y z vx vy vz`. It sets ids and types,
+  converts velocities to internal units and moves everything to the
+  centre-of-mass frame.
+- `typecode(name)` - the type code of a type name (any case), 0 if unknown.
 
 Diagnostics
-- `diagnose(time)` - energies (including closed binaries), centre of mass,
-  velocity dispersion and 10/50/90% Lagrangian radii of the current state.
+- `diagnose(time)` - energies (including the internal energy of every group,
+  `emerged` for mergers, and the bookkeeping for frozen triples), centre of
+  mass, velocity dispersion and the 10/50/90% Lagrangian radii.
 - `lagradii(nf,frac,rl)` - Lagrangian radii for any list of mass fractions.
-- `levelhist(hist)` - number of bodies on each timestep level.
+- `indexsort`, `cmpidx` - the index that sorts an array.
+- `typecounts(out)` - text giving the number of each particle type.
 
 Screen
-- `writelevels` - prints the table of timestep levels (verbose).
-- `startinfo(nout)` - the header at the start of the run.
-- `statusout(...)` - the line (standard) or block (verbose) at every output
-  time, and the warnings.
+- `startclock`, `walltime`, `restartcounters`, `hms` - clocks and the counters
+  each output interval is measured from.
+- `startinfo(nout)` - the header at the start of a run.
+- `statusout(...)` - one line (standard) or a block (verbose) at every output
+  time, plus the warnings.
 - `endinfo(time,nforce)` - the summary at the end.
 
 Files
-- `hdrs`, `hdrd`, `hdrv`, `hdri` - write one `# key = value` header line (text,
-  real, several reals, integer).
-- `hdrcommon(u)` - the header lines common to every output file.
-- `hdrphysics(u)` - the header lines that depend on which physics is on (tide,
-  binaries, few-body, mergers, neighbour scheme), each block written only when
-  its physics is on. **New physics adds its header block here.**
-- `snapname(time)` - function: the snapshot file name, including the data
-  directory.
-- `snapshot(time,nforce)` - writes a snapshot (all stars, closed binaries
-  split into their two stars, in id order, with types).
-
-## nbrestart.f90 - restart files
-The file format (a list of named sections) is explained at the top of the file.
-- `restartname()` - function: the restart file name.
-- `secthead(u,name,nrec)` - starts a section of the file.
-- `writerestart(time,iout,nblock,nforce)` - writes the complete state.
-- `readrestart(time,iout,nblock,nforce)` - reads it, allocates the arrays and
-  sets up the run to carry on. Sections it does not know are skipped.
-
-## nbana.f90 - in-run analysis
-How to add a new analysis is described at the top of the file.
-- `ananame(name)` - function: the analysis file name, including the data
-  directory.
-- `ana_open(u,name,columns,units)` - opens an analysis file (appends on a
-  restart) and writes its header.
-- `ana_init` - opens the files of the analyses that are switched on.
-- `ana_do(time)` - does all the analyses that are switched on.
-- `ana_end` - closes the files.
-- `ana_lagrangian(time)` - the example analysis: 1-90% Lagrangian radii and
-  velocity dispersion.
-- `checkrunid(nsnap,nana)` - stops a new run if output files with its `runid`
+- `hdrs`, `hdrd`, `hdri`, `hdrv` - write one `# key = value` header line.
+- `hdrcommon(f)` - the header lines common to every output file.
+- `hdrphysics(f)` - the header lines that depend on which physics is on,
+  each block written only when its physics is on. **>>> New physics adds
+  its word to `physics` and its block here.**
+- `snapname(time,fname)` - the snapshot file name, with the data directory.
+- `snapshot(time,nforce)` - writes a snapshot: all stars, groups split into
+  their stars, in id order, with types.
+- `ananame`, `ana_init`, `ana_do`, `ana_end` - the in-run analysis files.
+  **>>> How to add an analysis is described above `ananame`.**
+- `checkrunid(nsnap,nana)` - stops a new run if output files with its runid
   already exist.
 
-## hermite.f90 - main program
-No subroutines. In order: read the parameter file name, `setunits`,
-`readparams`, `checkdatadir`; for an ensemble either `runensemble` (and stop)
-or, with a member number on the command line, `setmember`; then either `readic`, set up the block clock,
-`firststep`, `collcheck`, `binstart`, `startinfo`, first snapshot and analysis,
-or (with `restart`) `readrestart`. Then the loop over output intervals; inside
-it the loop over blocks:
-1. find the next block time and the active particles (the list is made in
-   parallel: one piece of the particles per thread, joined up in order)
-2. predict all particles to that time
-3. rebuild the tree or refresh its moments (if `usetree`)
-4. `forces`, then correct the active particles (`niter` times); with the
-   neighbour scheme a star on a regular step also gets its regular correction
-5. accept the step (`acaccept`) and choose new timestep levels (`newlevel`,
-   `aclevel`)
-6. `collcheck` and `bincheck`
+## force.c - gravity and timesteps
+- `tideadd(i,a,jk)` - adds the Galactic tide and the Coriolis force to an
+  acceleration and jerk.
+- `sumrange(...)` (internal, inline) - the pair kernel: acceleration and jerk
+  on one body from a range of others, with the shortest pairwise
+  free-fall/flyby time and the nearest distance. `nbsum` in `ac.c` is a copy
+  of it for neighbour lists, so keep the two identical.
+- `fullsum(i,par,...)` - force on `i` from all bodies, shared over the threads
+  if `par`.
+- `direct(i,par)` (internal) - force on one active body, with the tide, into
+  `f0p`, `f1p`.
+- `forces` - forces on all the active bodies: the neighbour scheme if
+  `useac`, otherwise parallel over the active bodies (big blocks) or over
+  the j-sum (small blocks).
+- `energy(ke,pot,ptid)` - kinetic, potential and tidal energy (direct sum),
+  and the potential `phi` of every body.
+- `getlevel(dtw)` - the timestep level of a wanted step, limited by `kmax`.
+- `commlev(k,t8)` - the nearest level that fits the block structure at the
+  current time.
+- `firststep` - forces on everyone at the start, and the first levels.
+- `newlevel(i)` - the new level of body `i` after its step: the smaller of
+  the Aarseth and pairwise criteria, down by any amount, up one level only
+  when the time allows.
 
-At the end of each output interval: `statusout`, `snapshot`, `ana_do`,
-`writerestart`. Finally `ana_end` and `endinfo`.
+## ac.c - Ahmad-Cohen neighbour scheme (only when `useac` is on)
+The scheme is explained at the top of the file.
+- `accheck(nstars)` - switches the scheme off, and says so, below 150 stars.
+  Where 150 comes from is explained above it.
+- `acalloc`, `acsetrs0` - sizes of the lists and allocation; first guess of
+  the neighbour-sphere radius.
+- `nbsum(...)` (internal) - force from the stars in a list.
+- `aclist(i,par,init,newl)` (internal) - a new neighbour list, with the
+  sphere radius moved towards `nnbopt` neighbours.
+- `acforce(i,inpar)` - the force on an active body: an irregular step, a
+  regular step (full sum, regular corrector, new list) or the first full sum
+  of a new body.
+- `acstart(i)`, `acaccept(i)`, `aclevel(i)` - start the regular step of a new
+  body; keep the new split forces when a step is accepted; choose the
+  regular level after `newlevel`.
+- `acmoverow(src,dst)`, `acmoved(src,dst)`, `acremoved(j,irep)`,
+  `acadded(jn,i0)` - keep every list right when a body is moved, removed or
+  created.
 
-## ics/ - the initial conditions generator
-One stand-alone program, `makeics`, separate from the N-body code (it uses none
-of its modules). The program does the steps common to every set of initial
-conditions; the routines it calls each make one thing and know nothing about
-the others. All random numbers come from `ran3`.
+## few.c - few-body tools (uses nothing else)
+- `fewacc(...)` (internal) - accelerations and jerks inside a group, the
+  shortest pairwise time and the closest pair.
+- `fewint(nm,mm,x,v,tint,...)` - integrates an isolated group for a given
+  time with 4th-order Hermite and one shared step. It stops early if two
+  stars collide.
+- `elements(mu,rr,vr,a,ecc,h)` - semi-major axis, eccentricity and angular
+  momentum of a two-body orbit.
+- `hierarchy(...)` - is a triple a stable hierarchy (Mardling & Aarseth
+  2001)? It returns the inner pair, the outer star and the two orbits.
+
+## groups.c - binaries, few-body groups, collisions and mergers
+How groups are closed, opened and frozen is explained at the top of the file.
+
+Kepler orbits and groups
+- `grpeint(nm,mm,xm,um)` - internal energy of a few stars.
+- `kepler(mu,r0,v0,dt,r1,v1)` - advances a bound two-body orbit by `dt`
+  exactly. Kepler's equation is solved by safeguarded Newton iteration in a
+  bracket of ±2 about the mean-anomaly change, which always holds the root.
+- `grpcomp(k,xc,vcm,tnow,nm,xm,um)` - positions and velocities now of the
+  stars of any group (binary, few-body group or frozen triple).
+- `fewadvance(k,...)` - brings a few-body group's own integration up to date,
+  merging stars inside it that collide.
+- `pairorbit`, `pericentre` - binding energy and apocentre of a pair; its
+  two-body pericentre.
+
+Collisions and mergers
+- `collision(i,j,...)` - the collision alert, and stop (when `mergers` is off).
+- `mergetype(t1,t2)` - the type of a merger product. **>>> CHANGE HERE** for
+  other rules.
+- `mergelog(...)` - the `** MERGER` alert and a line in `<runid>_mergers.dat`.
+- `mergestars(i,j,t8,tnow)` - merges two single stars.
+- `collcheck(t8,tnow)` - after each block, tests bodies that came close to
+  another and merges them (or stops).
+
+Neighbours and perturbations
+- `gperturb(...)` - the perturbation gamma on a (possible) group.
+- `grpgamma(i,tnow)` - gamma of the group whose c.o.m. body is `i`.
+- `nearestx(i,jex)` - the nearest body to `i`, not counting `jex`.
+
+Closing and opening
+- `moverow(src,dst)` - copies all the data of one body to another slot.
+- `startbody(nl,list,t8,levmin)` - forces and first steps of new bodies.
+- `closegroup(nm,list,mode,t8,tnow)` - replaces stars by one c.o.m. body.
+- `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars,
+  booking the energy change of a frozen triple in `efrozen`.
+- `pairstate(i,j)` - 1 if two single stars can be closed as a binary, else 0.
+  A pair whose pericentre is inside `rcoll` is never closed: it is merged by
+  `collcheck` when the stars meet.
+- `tryfreeze(k)` - freezes a few-body group of three if it is a stable
+  triple, and records its energy then (`bein`).
+- `tryfew(nb,bod,t8,tnow)` - makes a few-body group if it would be isolated
+  and would pay. When it pays is explained above it; `NFEWFAC` is at the top
+  of the file.
+- `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
+  among the bodies that have just stepped.
+- `binstart(tnow)` - closes binaries and makes few-body groups in the
+  initial conditions.
+
+Debugging (only with the environment variable `HENDOS_DEBUG` set)
+- `dbgenergy`, `dbgbefore`, `dbgafter` - print the change in total energy
+  across every close, open, freeze and few-body event. Each change should be
+  about 1e-7 or smaller.
+
+## restart.c - restart files
+The file format (a list of named sections that a reader can skip) is
+explained at the top of the file.
+- `restartname`, `secbegin`, `secend`, `rd` (internal) - file name, sections,
+  reading.
+- `writerestart(time,iout,nblock,nforce)` - writes the complete state. It
+  writes to a temporary name first, so a crash never destroys the previous
+  file.
+- `readrestart(time,iout,nblock,nforce)` - reads it and sets the run up to
+  carry on. Sections it does not know are skipped.
+
+## ics/ - the initial conditions generator (Fortran)
+One stand-alone program, `makeics`, separate from the N-body code. How to
+change it is in `ics/ICS_README.md`, and the fractals are described in
+`ics/FRACTAL_README.md`. Its routines:
 
 ### ics/makeics.f90 - the program
 Written to be changed: the places to change are marked `! >>> CHANGE HERE`
-and `! >>> NEW PARAMETER`, and `ics/ICS_README.md` gives recipes. The main
-program is seven steps, one call each: `makestructure`, `makemasses`, scale
-the positions to pc, `tocom`, `virialise` (or `larsonise` for a Larson
-fractal, or neither if `setvirial` is off), `userfinal`, then `report` and
-`writeics`. Its internal routines:
-- `makestructure` - step 1. Calls `makeplummer`, `makefractal`,
-  `larsonfractal` or `userstructure` for the positions and velocities in
-  model units, sets every mass to unity, and sets `rscale`, the factor that
-  takes the positions to pc (from the half-mass radius for a Plummer sphere,
-  the total radius for a fractal). A new structure is a new `CASE` here.
-- `makemasses` - step 2. Gives the stars their masses (`maschberger`, all
-  equal, or `usermasses`) and their types. A new mass function is a new
-  `CASE` here.
-- `ensname(name,k)` - function: the file name of member `k` of an ensemble (the
-  same rule as `ensname` in `nbsetup.f90`). The seven steps are inside a loop
-  over the members; only the seed and the file name change.
-- `tocom` - step 4. Moves to the centre of mass and centre of velocity.
-- `virialise` - step 5. Scales all velocities by one factor to give exactly
-  the virial ratio asked for.
-- `larsonise` - step 5, Larson fractals only. Scales the velocities to the
-  observed size-linewidth relation in km/s instead.
-- `energies` - kinetic and potential energy of the stars as they are.
-- `report` - step 7. Summary on the screen, measured from the stars as
-  written (masses, half-mass radius, virial ratio, velocity dispersion).
-- `writeics` - step 7. Writes the NBODY-SNAPSHOT 2 file.
-- `readinput` - sets the standard values, reads the namelist sections `&ics`,
-  `&masses` and `&fractal` of the parameter file and checks them.
-- `nmlerror(name,ios,msg)` - stops with the compiler's message if a section
-  is wrong.
-- `bad(text)` - stops with an error message.
+and `! >>> NEW PARAMETER`. The main program has seven steps, one call each:
+`makestructure`, `makemasses`, scale the positions to pc, `tocom`,
+`virialise` (or `larsonise` for a Larson fractal, or neither if `setvirial`
+is off), `userfinal`, then `report` and `writeics`. The seven steps are
+inside a loop over the members of an ensemble. Its internal routines:
+- `makestructure` - positions and velocities in model units
+  (`makeplummer`, `makefractal`, `larsonfractal` or `userstructure`), with
+  every mass set to unity, and `rscale`.
+- `makemasses` - masses (`maschberger`, all equal, or `usermasses`) and types.
+- `ensname(name,k)` - the file name of member `k` of an ensemble, by the same
+  rule as `ensname` in `params.c`.
+- `tocom` - to the centre of mass and centre of velocity.
+- `virialise` - scales the velocities to the virial ratio asked for.
+- `larsonise` - Larson fractals: scales the velocities to the size-linewidth
+  relation instead.
+- `energies`, `report`, `writeics` - energies, the summary on the screen,
+  the NBODY-SNAPSHOT 2 file.
+- `readinput`, `nmlerror`, `bad` - reads and checks `&ics`, `&masses` and
+  `&fractal`.
 
 ### ics/usersubs.f90 - the user's own code
-The file to edit to make initial conditions your own way. Each routine is
-called by `makeics` at one point.
-- `userstructure(nstar,rstar,vstar,idum)` - your own positions and
-  velocities; used when `distribution = 'user'`. As supplied: a uniform
-  sphere with Gaussian velocities.
-- `usermasses(nstar,m,rstar,idum)` - your own masses; used when `imf =
-  'user'`. As supplied: a Salpeter mass function from 0.5 to 50 Msun.
-- `userfinal(nstar,m,rstar,vstar,ptype,idum)` - any last changes to anything;
-  always called, just before the output. As supplied: does nothing, with
-  three examples commented out (black holes above a mass, most massive star
-  to the centre, rotation).
+- `userstructure` - your own positions and velocities (`distribution =
+  'user'`). As supplied it makes a uniform sphere.
+- `usermasses` - your own masses (`imf = 'user'`). As supplied it gives a
+  Salpeter mass function.
+- `userfinal` - any last changes to anything; always called. As supplied it
+  does nothing, and has three examples commented out.
 
-### ics/plummersubs.f90 - Plummer sphere
-- `makeplummer(nstar,rstar,vstar,idum)` - positions and velocities of a
-  Plummer sphere cut at 10 Plummer radii, in model units (G = 1, total mass
-  1, Plummer radius 1), for equal-mass stars. Double precision.
-
-### ics/masssubs.f90 - stellar masses
-- `maschberger(nstar,m,idum,alpha,beta,mu,mlo,mup)` - masses of single stars
-  from the L3 IMF of Maschberger (2013), sampled exactly with one random
-  number per star (the Sheffield sampling code).
-
-### ics/icrandom.f90 - random numbers
-- `ran3(idum)` - function: uniform random number between 0 and 1, by Knuth's
-  subtractive method (the method of `ran3` in Numerical Recipes, same calling
-  convention, written for HENDOS from the published algorithm). Started by
-  calling it with a negative `idum`.
-- `gasdev(idum)` - function: Gaussian random number (zero mean, unit
-  variance) made from `ran3`.
-
-### ics/fractalsubs.f90 - box-fractal routine
-How the fractal is built, the core size and the velocity options are explained
-in `ics/FRACTAL_README.md`.
-The Sheffield box fractal (Goodwin & Whitworth 2004), from the routines
-`makefractal` and `makefractal2`; lines that differ from the routines as
-supplied are marked `! HENDOS:`.
-- `makefractal(nstar,rstar,vstar,fdim,ndiv,idum,radius,vscale,coresize,vtype)` -
-  makes the positions, and every velocity field except Larson's.
-  - positions: a box is divided into `ndiv`^3 (8 as standard), the nearest
-    whole number to `ndiv`^`fdim` of them are kept and divided again, and a
-    sphere of radius `radius` is cut out. With `coresize` = 0 dividing stops
-    when there are more than 3.5 times `nstar` boxes (the original
-    `makefractal`); with `coresize` > 0 it stops when the boxes are smaller
-    than `coresize` (`makefractal2`).
-  - velocities, `vtype`: `'f'` inherited from the parent plus a random part
-    proportional to box size; `'s'` inherited plus a random part the same
-    size at every level (the original `makefractal`); `'u'` uncorrelated;
-    `'n'` none (zero).
-- `larsonfractal(nstar,rstar,vstar,fdim,ndiv,idum,radius,vscale,coresize)` -
-  a fractal whose velocities follow Larson's law (velocity difference
-  proportional to the square root of separation). It calls `makefractal` for
-  the positions (with `vtype` `'n'`), then draws all the velocities together
-  as correlated Gaussian numbers. Needs an `nstar` by `nstar` matrix.
+### ics/plummersubs.f90, masssubs.f90, icrandom.f90, fractalsubs.f90
+- `makeplummer` - a Plummer sphere cut at 10 Plummer radii, in model units.
+- `maschberger` - masses from the L3 IMF of Maschberger (2013).
+- `ran3`, `gasdev` - uniform (Knuth's subtractive method) and Gaussian random
+  numbers.
+- `makefractal`, `larsonfractal` - the Sheffield box fractal (Goodwin &
+  Whitworth 2004) and its velocity fields, including Larson's law (see
+  `ics/FRACTAL_README.md`).

@@ -1,17 +1,77 @@
 /* ==============================================================
- * HENDOS (C version) - groups.c
- * BINARIES, FEW-BODY GROUPS, COLLISIONS AND MERGERS.
- * The counterpart of nbbin.f90, where all of this is explained: a
- * compact set of stars that is unperturbed by the rest of the cluster
- * is replaced by one centre-of-mass (c.o.m.) body and its internal
- * motion followed separately. Three kinds of group (bmode):
- *   1  binary          exact Kepler orbit
- *   2  few-body group  3 to KFMAX stars, integrated by fewint (few.c)
- *   3  stable triple   two nested Kepler orbits
- * gamma = 2 s^3 / mb * sum_k m_k / d_k^3 is the perturbation of a
- * group of mass mb and size s by the other bodies.
- * Bodies are kept in slots 0..n-1; a group index is 0..nbin-1 and
- * ib[i] = -1 means body i is a single star.
+ * HENDOS - HErmite N-body Dynamics Of Systems - groups.c
+ * BINARIES, FEW-BODY GROUPS, COLLISIONS AND MERGERS (no regularisation)
+ *
+ * GROUPS. A compact set of stars that is effectively unperturbed by the
+ * rest of the cluster is replaced by a single centre-of-mass (c.o.m.)
+ * body, and its internal motion is followed separately, in isolation.
+ * The stars then no longer force tiny timesteps on the main
+ * integration (where every step costs a prediction of all N bodies).
+ * There are three kinds of group (bmode):
+ *   1  binary          internal orbit is an exact Kepler orbit
+ *   2  few-body group  3 to kfmax stars in a close encounter, integrated
+ *                      by the small Hermite integrator in few.c
+ *                      (compare the 'multiples' module of AMUSE). The
+ *                      group and the cluster advance together in time:
+ *                      the group is brought up to date whenever its
+ *                      c.o.m. body steps and whenever output is written
+ *   3  stable triple   a hierarchical triple that passes the Mardling &
+ *                      Aarseth (2001) stability test is frozen as two
+ *                      nested Kepler orbits (no secular evolution)
+ * When a group becomes perturbed it is 'opened' back into its stars,
+ * which are then integrated directly like any other stars.
+ *
+ * relative perturbation of a group of mass mb and gsize s by all other
+ * bodies k at distance d_k from its c.o.m.:
+ *    gamma = 2 s^3 / mb * sum_k m_k / d_k^3
+ * (tidal acceleration across the group / internal acceleration);
+ * s is the apocentre of a binary, or the diameter of a larger group
+ *
+ * CLOSE   star i after its step if: its step < dtclose, its nearest
+ *         neighbour j is a single star on the same block, the pair is
+ *         bound, and gamma < gclose                       -> binary
+ * FEW     if that pair is bound but perturbed, the pair and the next
+ *         nearest body are tried as a group; so are a perturbed group
+ *         and its nearest body. The group is formed if its own
+ *         gamma < gfew, and if there are enough bodies in the main
+ *         integration for it to pay (see tryfew)          -> few-body
+ * FREEZE  a few-body group of three that is a stable hierarchy
+ *                                                         -> triple
+ * OPEN    a binary after one of its c.o.m. steps if gamma > gopen, any
+ *         other group if gamma > 10 gfew (unless it can take its
+ *         perturber in and still be isolated, see FEW)
+ * (gopen > gclose and the factor 10 give hysteresis, so groups do not
+ * flicker.) Binaries in the initial conditions are closed at the start.
+ * A star that leaves a few-body group makes the group large, so its
+ * gamma rises and it is opened; what is left is closed again as a
+ * binary if it is one.
+ *
+ * COLLISIONS AND MERGERS. Two stars that pass within rcoll of each
+ * other have collided. With mergers on they are merged into one star
+ * (mass and momentum conserved) and the run carries on; a merger is
+ * announced on the screen and written to <runid>_mergers.dat. The
+ * orbital energy of the pair is lost from the stellar dynamics: it is
+ * added up in emerged so that the energy check still works. With
+ * mergers off the run stops with an alert, as before. Collisions inside
+ * few-body groups are treated in the same way.
+ *
+ * The bodies are kept contiguous in slots 0..n-1 of the particle arrays
+ * (n = number of bodies, ntot = number of stars), so the force loops
+ * are unchanged: closing puts the c.o.m. in the lowest slot and moves
+ * the last bodies into the others; opening uses the c.o.m. slot and
+ * slots n onwards. Only one open and one close are done per block.
+ *
+ * All of this is done serially between blocks, outside any OpenMP
+ * parallel region; the O(N) loops inside are parallelised. With the
+ * neighbour scheme on (ac.c) the neighbour lists are kept correct
+ * through every change.
+ *
+ * Groups are invisible in the output: snapshots contain all ntot
+ * stars. The types of the stars are kept in btype while they are in a
+ * group (the c.o.m. body has itype = 0) and restored when it is opened.
+ *
+ * Here a group index is 0..nbin-1, and ib[i] = -1 means body i is a
+ * single star.
  * ============================================================== */
 #include <omp.h>
 #include "hendos.h"
@@ -781,9 +841,36 @@ static double grpgamma(int i, double tnow)
  * stars or groups, all at integer time t8). It is made if it has 3 to
  * KFMAX stars, its perturbation by the rest of the cluster is below
  * gfew, and it would pay: the main integration must have at least
- * NFEWFAC*nm*(nm-1) bodies (see tryfew in nbbin.f90 for why), unless
+ * NFEWFAC*nm*(nm-1) bodies (see below for why), unless
  * it is a stable triple, which costs nothing once frozen. Returns 1 if
- * the group was made. */
+ * the group was made.
+ *
+ * WHEN A GROUP PAYS. Taking nm stars out saves work only if the main
+ * integration is big enough. There, each step of a close pair costs
+ * about 2.5 n pair interactions (two force sums over the n bodies and
+ * the prediction of all of them). In the few-body integrator a step
+ * costs about 1.3 nm (nm-1) (two evaluations of every pair), and it
+ * takes 2 to 4 times as many steps per orbit as the main integrator
+ * (measured on binaries with eccentricity 0.9 to 0, at the standard
+ * eta and etafew; it is also about 1000 times more accurate per orbit).
+ * The costs are equal when
+ *      n = (1.1 to 2.3) nm (nm-1)
+ * so a group is only made if n >= NFEWFAC nm (nm-1), NFEWFAC = 2:
+ *      stars in the group        3     4     5     6
+ *      bodies needed            12    24    40    60
+ * The break-even depends on the size of the group, not on a fixed
+ * number of stars, and it is far below that of the neighbour scheme
+ * (150), because the saving per step is n/nm^2, not n/neighbours.
+ * Accuracy does not depend on n at all: it is set by gfew and etafew.
+ * A stable triple is always worth it, whatever n is, because frozen as
+ * Kepler orbits it costs nothing: so three stars that are a stable
+ * hierarchy are taken out even if n is below the number above.
+ *
+ * >>> CHANGE HERE (NFEWFAC, at the top of this file) once the break-even has
+ *     been measured with the compiled code: benchmark/bench_kira.py
+ *     --skip-kira --modes nofew direct
+ *
+ */
 static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
 {
     int nm = 0;

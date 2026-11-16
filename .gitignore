@@ -1,8 +1,8 @@
 # built by make in run/
-run/build/
 run/hermite
-run/hermite_c
 run/makeics
+archive/fortran/run/build/
+archive/fortran/run/hermite_fortran
 *.o
 *.mod
 
