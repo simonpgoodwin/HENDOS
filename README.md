@@ -353,9 +353,9 @@ Known limits of the new parts:
 - frozen triples have no secular evolution; the small change in a triple's
   energy while it is frozen is booked in `energy_change_frozen_triples`;
 - there is no regularisation: perturbed hard binaries are integrated directly
-  in the main code. In clusters rich in hard binaries the default `eta` = 0.02
-  can give energy errors of 1e-2 or worse, while `eta` = 0.01 gave 1e-4 in the
-  same tests;
+  in the main code. That is why the standard `eta` is 0.01: in clusters rich in
+  hard binaries `eta` = 0.02 gave energy errors of 1e-2 or worse, while 0.01
+  gave about 1e-4 in the same tests;
 - mergers conserve mass and momentum, with no mass loss, kick or change of
   radius - stellar evolution will supply those;
 - in the neighbour scheme the predictor's higher-order terms are not corrected

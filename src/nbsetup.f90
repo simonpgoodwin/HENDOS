@@ -87,7 +87,7 @@
    rho0=0.097d0         ! McKee, Parravano & Hollenbach 2015, ApJ, 814, 13
    tij=0.d0
    omegat=0.d0
-   eta=0.02d0
+   eta=0.01d0
    etap=0.2d0
    etas=0.01d0
    niter=1

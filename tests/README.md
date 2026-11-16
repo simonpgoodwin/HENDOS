@@ -41,7 +41,7 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | Test | What it runs | What it checks |
 |---|---|---|
 | `kepler_circular` | two stars, circular orbit, 10 periods, integrated directly | energy; stars back where they started |
-| `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy (1e-4: about 2e-5 is normal at `eta` = 0.02) |
+| `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy |
 | `binary_closed` | the same binary treated as one body | exact Kepler orbit: energy to 1e-10, position, one group |
 | `pythagorean_direct` | Burrau's three-body problem to t = 10, directly | energy |
 | `pythagorean_fewbody` | the same as a few-body group, with nine light distant stars so that there are the 12 bodies a group of three needs | energy; a group was formed |

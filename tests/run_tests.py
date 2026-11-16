@@ -58,7 +58,7 @@ DEFAULTS = {
     'neighbours.useac': False,
     'binaries.closebinaries': True, 'binaries.fewbody': True,
     'collisions.rcoll': 0.0, 'collisions.mergers': True,
-    'integrator.eta': 0.02, 'integrator.niter': 1,
+    'integrator.eta': 0.01, 'integrator.niter': 1,
 }
 
 

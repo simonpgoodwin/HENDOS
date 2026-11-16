@@ -442,10 +442,14 @@ mergers were added.
 
 ## `&integrator` - the Hermite integrator and its timesteps
 
-### `eta` (standard value 0.02)
+### `eta` (standard value 0.01)
 The accuracy parameter of the Aarseth timestep criterion, which sets each
 particle's timestep from its acceleration and its derivatives. Smaller means
 shorter steps: more accurate and slower. 0.01 to 0.02 is usual.
+The standard value is 0.01 because HENDOS has no regularisation: perturbed
+hard binaries are integrated directly, and in clusters rich in them 0.02 gave
+energy errors of 1e-2 or worse where 0.01 gave about 1e-4, for about 25% more
+time. Without many hard binaries 0.02 is enough and faster.
 
 ### `etap` (standard value 0.2)
 A safety net. No particle's timestep may be longer than `etap` times the
