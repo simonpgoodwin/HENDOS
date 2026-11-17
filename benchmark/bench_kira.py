@@ -8,8 +8,7 @@ HENDOS can do the same problem in several ways, so it is run in one or more
 MODES (--modes), each of which is compared with kira separately:
     direct       direct summation, binaries and few-body groups on [standard]
     neighbours   the same with the Ahmad-Cohen neighbour scheme
-    tree         Barnes-Hut tree (approximate forces; only the archived
-                 Fortran has it: --hermite ../archive/fortran/run/hermite_fortran)
+    tree         Barnes-Hut tree (approximate forces)
     nofew        direct, binaries on but few-body groups off
     nobin        direct, every star integrated directly (no binaries/groups)
 The modes are the table HENDOS_MODES below - add your own there.

@@ -1,7 +1,7 @@
 /* ==============================================================
  * HENDOS - HErmite N-body Dynamics Of Systems - force.c
  * GRAVITY AND TIMESTEPS: accelerations and jerks on the active bodies
- * by direct summation (with the Galactic tide), energies, and the
+ * by direct summation or the tree (tree.c), with the Galactic tide, energies, and the
  * choice of each body's block timestep level.
  * (Archived Fortran equivalents: nbforce.f90 and nbstep.f90.)
  * ============================================================== */
@@ -112,6 +112,22 @@ void forces(void)
         } else {
             for (int ia = 0; ia < nact; ia++) acforce(ilist[ia], 0);
         }
+    } else if (usetree) {
+        /* Barnes-Hut tree: each walk is independent, so the active stars
+         * are shared over the threads (dynamic: walks differ in cost) */
+#pragma omp parallel for schedule(dynamic, 4) if (nact >= nompmin)
+        for (int ia = 0; ia < nact; ia++) {
+            int i = ilist[ia];
+            double a[3], jk[3], t2, r2;
+            treeforce(i, a, jk, &t2, &r2);
+            tideadd(i, a, jk);
+            for (int k = 0; k < 3; k++) {
+                f0p[i][k] = a[k];
+                f1p[i][k] = jk[k];
+            }
+            tpair2[i] = t2;
+            rmin2[i] = r2;
+        }
     } else if (nact >= nompmin) {
 #pragma omp parallel for schedule(static)
         for (int ia = 0; ia < nact; ia++) direct(ilist[ia], 0);
@@ -194,6 +210,7 @@ void firststep(void)
     tcur8 = 0;
     aclast = 1;
     if (useac) acsetrs0();
+    if (usetree) treebuild();
     forces();
 #pragma omp parallel for schedule(static) if (n >= nompj)
     for (int i = 0; i < n; i++) {
@@ -216,6 +233,7 @@ void firststep(void)
  *   dt_A = sqrt(eta (|a||a2| + |a1|^2)/(|a1||a3| + |a2|^2))  (Aarseth),
  *          with a2, a3 at the END of the step
  *   dt_P = etap min_j(sqrt(r^3/(mi+mj)), r/v)                 (pairwise)
+ *   with the tree, dt_A is never less than etatree |a|/|a1| (see below)
  * levels can go down (smaller step) by any amount, up by one level and
  * only when the current time is commensurate with 2 dt */
 void newlevel(int i)
@@ -225,7 +243,19 @@ void newlevel(int i)
     double amod = norm3(f0[i]), jmod = norm3(f1[i]), smod = norm3(s), cmod = norm3(f3[i]);
     double dtw = etap * sqrt(tpair2[i]);
     double denom = jmod * cmod + smod * smod;
-    if (denom > 0.0) dtw = fmin(dtw, sqrt(eta * (amod * smod + jmod * jmod) / denom));
+    double da = HUGE_VAL;
+    if (denom > 0.0) da = sqrt(eta * (amod * smod + jmod * jmod) / denom);
+    /* With the tree the force on a star jumps a little (by about the tree's
+     * force error) whenever a node switches between being used whole and
+     * being opened. The Hermite corrector reads each jump as a large 2nd
+     * and 3rd derivative, and the Aarseth step above collapses: at N = 4000
+     * the runs took 9 times as many steps as direct summation. So with the
+     * tree the step is never made shorter than etatree |a|/|j|, which does
+     * not use those derivatives; where the Aarseth step is longer (binaries,
+     * close encounters, whose forces come from opened leaves and are smooth)
+     * it is still used. */
+    if (usetree && amod > 0.0 && jmod > 0.0) da = fmax(da, etatree * amod / jmod);
+    dtw = fmin(dtw, da);
     int knew = getlevel(dtw);
     if (knew > lev[i]) lev[i] = knew;
     else if (knew < lev[i] && tk[i] % (2 * dtk[i]) == 0) lev[i]--;

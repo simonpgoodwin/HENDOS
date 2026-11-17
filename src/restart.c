@@ -117,6 +117,12 @@ void writerestart(double time, int iout, int64_t nblock, int64_t nforce)
         secend(f);
     }
 
+    if (usetree) {
+        secbegin(f, "TREE");
+        WR1(f, ntreebuilt);
+        secend(f);
+    }
+
     /* >>> NEW SECTIONS GO HERE */
 
     secbegin(f, "END");
@@ -189,6 +195,8 @@ void readrestart(double *time, int *iout, int64_t *nblock, int64_t *nforce)
             RD(bnum, nbin); RD(bmode, nbin); RD(bmass, nbin); RD(bident, nbin);
             RD(btype, nbin); RD(brel, nbin); RD(brel2, nbin); RD(bepoch, nbin);
             RD(bx, nbin); RD(bv, nbin);
+        } else if (!strcmp(tag, "TREE")) {
+            RD1(ntreebuilt);              /* (the tree itself is rebuilt) */
         } else if (!strcmp(tag, "FROZEN")) {
             RD1(efrozen); RD(bein, nbin);
         } else if (!strcmp(tag, "NEIGHBOURS")) {

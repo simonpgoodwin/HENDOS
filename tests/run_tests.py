@@ -136,8 +136,9 @@ class Tester:
         return fname
 
     # -- running -------------------------------------------------------
-    def run(self, runid, icfile, need_snaps=True, **changes):
+    def run(self, runid, icfile, need_snaps=True, threads=None, **changes):
         """Run hermite. Parameters are given as section__name=value.
+        threads sets OMP_NUM_THREADS for this run (otherwise it is inherited).
 
         Returns the Run result: .log (screen output) and .snaps (the
         snapshot file names in time order); .last is the last snapshot.
@@ -147,8 +148,11 @@ class Tester:
         if self.dry:
             raise Failed('dry run: input files written, nothing run')
         with open(os.path.join(self.dir, runid + '.log'), 'a') as log:
+            env = dict(os.environ)
+            if threads is not None:
+                env['OMP_NUM_THREADS'] = str(threads)
             proc = subprocess.run([self.hermite, os.path.basename(pfile)], cwd=self.dir,
-                                  stdout=log, stderr=subprocess.STDOUT)
+                                  stdout=log, stderr=subprocess.STDOUT, env=env)
         res.read()
         if proc.returncode != 0:
             tail = '\n'.join(res.log.strip().split('\n')[-6:])
@@ -374,13 +378,70 @@ def test_plummer_tree(t):
     """The same with the Barnes-Hut tree."""
     m, pos, vel = plummer(256)
     t.write_ics('ics.dat', m, pos, vel)
+    r = tree_run(t, 'pltr', 'ics.dat', run__tend=2.0)
+    t.check('energy error', energy_error(r.last), 1e-4)
+
+
+def tree_run(t, runid, icfile, **changes):
+    """t.run with the tree on; a test is skipped if the executable has no tree."""
     try:
-        r = t.run('pltr', 'ics.dat', run__tend=2.0, tree__usetree=True)
+        return t.run(runid, icfile, tree__usetree=True, **changes)
     except Failed as err:
         if 'tree is not in this version' in str(err):
-            raise Skipped('this executable has no tree (only the archived Fortran has it)')
+            raise Skipped('this executable has no tree')
         raise
-    t.check('energy error', energy_error(r.last), 5e-3)
+
+
+def test_tree_threads(t):
+    """The tree is built in parallel, but the build must give the same tree
+    as a serial one, and every walk is serial: so a tree run with one thread
+    and one with two must be identical, to the last digit."""
+    m, pos, vel = plummer(800, seed=3)
+    t.write_ics('ics.dat', m, pos, vel)
+    one = tree_run(t, 'one', 'ics.dat', threads=1, run__tend=0.25, computing__nompj=64).last
+    two = tree_run(t, 'two', 'ics.dat', threads=2, run__tend=0.25, computing__nompj=64).last
+    t.check('largest position difference, 1 and 2 threads (pc)',
+            np.abs(one.pos - two.pos).max(), 1e-15)
+    t.check('energy error', energy_error(two), 1e-4)
+
+
+def test_restart_tree(t):
+    """A tree run restarted half way ends exactly where the unbroken run ends
+    (the tree is rebuilt at the start of every output interval)."""
+    m, pos, vel = plummer(300, seed=6)
+    t.write_ics('ics.dat', m, pos, vel)
+    ref = tree_run(t, 'ref', 'ics.dat', run__tend=1.0, output__trestart=0.5).last
+    tree_run(t, 'rst', 'ics.dat', run__tend=0.5, output__trestart=0.5)
+    s = tree_run(t, 'rst', 'ics.dat', run__tend=1.0, output__trestart=0.5,
+                 run__restart=True).last
+    t.check('largest position difference (pc)', np.abs(s.pos - ref.pos).max(), 1e-9)
+
+
+def test_tree_binaries(t):
+    """A Plummer sphere with 20 hard binaries, with the tree: groups are
+    closed and opened (which invalidates and rebuilds the tree) and their
+    perturbations come from the tree. Compared with the same run by direct
+    summation."""
+    rng = np.random.default_rng(11)
+    m, pos, vel = plummer(400, seed=7)
+    mb, pb, vb = [], [], []
+    for k in range(20):
+        mk, pk, vk, _ = binary(1.0, 0.5, 10 ** rng.uniform(-4.5, -3.5), rng.uniform(0, 0.7))
+        mb += list(mk)
+        pb += list(pk + pos[k])
+        vb += list(vk + vel[k])
+    m = np.concatenate([mb, m[20:]])
+    pos = np.vstack([pb, pos[20:]])
+    vel = np.vstack([vb, vel[20:]])
+    t.write_ics('ics.dat', m, pos, vel)
+    tr = tree_run(t, 'tree', 'ics.dat', run__tend=1.0).last
+    di = t.run('dir', 'ics.dat', run__tend=1.0).last
+    t.check('energy error with the tree', energy_error(tr), 1e-3)
+    t.check('groups closed with the tree', int(tr.value('binaries_closed')) >= 20, True, 'equal')
+    t.check('stars in the snapshot', tr.n, 420, 'equal')
+    t.check('half-mass radius, tree / direct - 1',
+            tr.value('lagrangian_radii_10_50_90_pc')[1] /
+            di.value('lagrangian_radii_10_50_90_pc')[1] - 1, 0.05)
 
 
 def test_plummer_tide(t):

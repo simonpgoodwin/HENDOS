@@ -299,24 +299,34 @@ slower. If the energy error with the neighbour scheme is worse than without
 it, reduce `etar` first: in tests halving it twice (0.02 to 0.005) reduced the
 energy error by about 200.
 
-## `&tree` - Barnes-Hut tree forces (archived Fortran version only)
-**The tree is only in the archived Fortran version** (`archive/fortran`). The
-N-body code in use (C) stops with a message if `usetree = .true.`, and
-ignores the other three parameters.
-
+## `&tree` - Barnes-Hut tree forces
 For large numbers of particles. Instead of summing the force from every other
 particle, distant groups of particles are replaced by a few terms describing
-the group. Energies are still calculated exactly.
+the group (its mass, quadrupole and octupole moments). Energies are still
+calculated exactly, so the energy error on the screen includes the error of
+the tree forces.
 
 ### `usetree` (switch, standard value `.false.`)
 `.true.` uses the tree for the forces; `.false.` uses direct summation, which
-is exact. The tree is worth using above a few thousand particles.
+is exact. With the tree on, the neighbour scheme (`useac`) is switched off,
+with a warning.
+
+Where the tree pays, timed on two cores for equal-mass Plummer spheres with
+`theta` = 0.5: at 4,000 stars it is about as fast as direct summation, at
+16,000 stars 1.8 times faster, and at 64,000 stars about 3 times faster. The
+gain grows with N, and with more cores. In return the energy error is set by
+the tree's force errors rather than by the timesteps: a few times 1e-7 to
+1e-6 per crossing time at `theta` = 0.5, against 1e-9 to 1e-10 by direct
+summation in the same runs. The tree is meant for large associations on large
+scales, not for small dense clusters full of hard binaries.
 
 ### `theta` (standard value 0.5)
 The opening angle, between 0 and 1. A group of particles is treated as a whole
 if its size divided by its distance is less than `theta`. Smaller is more
-accurate and slower: force errors are about 0.02 per cent at 0.3, 0.2 per cent
-at 0.5 and 1 per cent at 0.7.
+accurate and slower. Measured for a clumpy system of 100,000 stars, the rms
+force errors were 0.02 per cent at 0.3, 0.2 per cent at 0.5, 0.9 per cent at
+0.7 and 4 per cent at 0.9. A walk at 0.5 cost a tenth of a direct sum over
+all the stars.
 
 ### `nleaf` (standard value 8)
 The largest number of particles in the smallest boxes of the tree. Particles
@@ -335,8 +345,25 @@ and the opening angle is applied to that. It changes only the speed: a tree
 that has not been rebuilt for a long time has boxes that have spread out and
 overlap, so more of them have to be opened. Too small a value wastes time
 rebuilding; too large a value slows the tree walks. It must be at least 1
-(rebuild every step). The tree is also rebuilt whenever a binary is closed or
-opened.
+(rebuild every step). The tree is also rebuilt whenever a group is closed or
+opened or stars merge, and at the start of every output interval (so that a
+run carried on from a restart file is exactly the same as an unbroken one).
+
+### `etatree` (standard value 0.03)
+A timestep safeguard used only with the tree. The force a star feels from the
+tree jumps a little - by about the tree's force error - whenever a group of
+stars switches between being used whole and being opened, which happens all
+the time as stars move. The Hermite integrator reads each jump as a large
+change in the higher derivatives of the force, and the usual (Aarseth)
+timestep criterion then shrinks the step far below what the motion needs:
+without this safeguard a 4,000-star tree run took 9 times as many steps as
+direct summation, and was 10 times slower. So with the tree no step is made
+shorter than `etatree` times the acceleration divided by its rate of change,
+a criterion that does not use those derivatives. Where the Aarseth step is
+longer (in binaries and close encounters, whose forces come from opened
+boxes and are smooth) it is still used, as is the pairwise limit `etap`. With
+0.03 the tree runs take about as many steps as direct summation; a smaller
+value takes more steps without making the tree forces any more accurate.
 
 ---
 

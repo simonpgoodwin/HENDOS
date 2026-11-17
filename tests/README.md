@@ -17,8 +17,8 @@ python3 run_tests.py --hermite ../archive/fortran/run/hermite_fortran   # the ar
 ```
 
 A test that needs something the executable does not have is reported as SKIP
-rather than FAIL, and is not counted. At present that means `plummer_tree`
-with the C code, which has no tree. It runs with the archived Fortran.
+rather than FAIL, and is not counted (the tree tests, with an executable that
+has no tree).
 
 It needs Python 3 with numpy, and uses `analysis/hendosio.py` to read the
 snapshots. Each test makes its own initial conditions, so `makeics` is not
@@ -50,7 +50,10 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `triple_frozen` | a stable hierarchical triple, alone | frozen as two Kepler orbits even with three bodies; energy; inner orbit unchanged |
 | `plummer_direct` | 256-star Plummer sphere, 2 Myr, direct | energy; virial ratio; number of stars |
 | `plummer_neighbours` | the same with the neighbour scheme | energy |
-| `plummer_tree` | the same with the tree | energy (looser: the tree is approximate) |
+| `plummer_tree` | the same with the tree | energy |
+| `tree_threads` | 800-star Plummer sphere with the tree, run with one thread and with two | identical to the last digit (the parallel build gives the same tree as a serial one) |
+| `restart_tree` | a tree run stopped half way and restarted | ends exactly where the unbroken run ends |
+| `tree_binaries` | Plummer sphere with 20 hard binaries, with the tree and by direct sums | energy; binaries closed; half-mass radius agrees with direct |
 | `plummer_tide` | the same in the solar tidal field | Jacobi energy; tidal keys in the header |
 | `header_flexible` | a run started from a snapshot with an unknown header key and an extra column added | keys follow the physics; the changed file is read correctly |
 | `merger` | two stars collide head on beside a third | one star fewer; mass and momentum conserved (energy to 2e-3, momentum to 1e-5: just before they meet the pair has about 700 times the system's total kinetic energy); merger file, screen alert and header count; id of the more massive kept |
@@ -79,7 +82,7 @@ automatically. `t` is a `Tester`:
   snapshot files, `.log` the screen output, `.file('_mergers.dat')` any other
   file of the run.
 - `raise Skipped('why')` marks the test as skipped, for when the executable
-  does not have what the test needs (see `test_plummer_tree`).
+  does not have what the test needs (see `tree_run`).
 - `t.check(what, value, limit)` passes if |value| < limit;
   `t.check(what, value, expected, 'equal')` passes if they are equal.
 

@@ -114,6 +114,7 @@ static Param table[] = {
     {"tree", "theta", 'd', &theta, 0},
     {"tree", "nleaf", 'i', &nleaf, 0},
     {"tree", "ntreebuild", 'i', &ntreebuild, 0},
+    {"tree", "etatree", 'd', &etatree, 0},
     {"computing", "nompmin", 'i', &nompmin, 0},
     {"computing", "nompj", 'i', &nompj, 0},
     {NULL, NULL, 0, NULL, 0}};
@@ -302,7 +303,7 @@ void readparams(const char *pfile)
     rcoll = 10.0; mergers = 1; restart_ = 0; trestart = 0.0;
     nensemble = 1; nparallel = 1; ensfirst = 1;
     useac = 0; nnbopt = 0; nnbmax = 0; etar = 0.01;
-    usetree = 0; theta = 0.5; nleaf = 8; ntreebuild = 10;
+    usetree = 0; theta = 0.5; nleaf = 8; ntreebuild = 10; etatree = 0.03;
     dtclose = 100.0; gclose = 1.e-6; gopen = 1.e-5;
     nompmin = 32; nompj = 1024;
 
@@ -387,9 +388,18 @@ void readparams(const char *pfile)
         if (gfew <= 0.0) BAD("gfew must be > 0");
         if (etafew <= 0.0 || etafew > 0.2) BAD("etafew must be between 0 and 0.2");
     }
-    if (usetree) BAD("the Barnes-Hut tree is not in this version of HENDOS - "
-                     "set usetree = .false. (only the archived Fortran version, "
-                     "archive/fortran, has it)");
+    /* the neighbour scheme is for direct summation only */
+    if (useac && usetree) {
+        printf(" WARNING: neighbour scheme switched off because the tree is on "
+               "(useac is for direct summation)\n");
+        useac = 0;
+    }
+    if (usetree) {
+        if (theta <= 0.0 || theta >= 1.0) BAD("theta must be between 0 and 1");
+        if (nleaf < 1) BAD("nleaf must be >= 1");
+        if (ntreebuild < 1) BAD("ntreebuild must be >= 1");
+        if (etatree <= 0.0) BAD("etatree must be > 0");
+    }
     if (useac) {
         if (nnbopt < 0 || nnbmax < 0) BAD("nnbopt and nnbmax must be >= 0 (0 = automatic)");
         if (etar <= 0.0) BAD("etar must be > 0");

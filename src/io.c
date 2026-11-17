@@ -361,7 +361,8 @@ void startinfo(int nout)
     printf("  particle types         %s\n", tc);
     printf("  start, end time        %14.4f%14.4f Myr\n", time0, tend);
     printf("  output every           %14.4f Myr  (%d outputs)\n", tout, nout);
-    if (useac) printf("  forces                 %14d  (direct, neighbour scheme: neighbours wanted)\n", nnbopt);
+    if (usetree) printf("  forces                 %14.2f  (tree opening angle; energies direct)\n", theta);
+    else if (useac) printf("  forces                 %14d  (direct, neighbour scheme: neighbours wanted)\n", nnbopt);
     else printf("  forces                        direct\n");
     printf("  tide                   %s\n", tidal);
     if (closebinaries)
@@ -391,6 +392,8 @@ void startinfo(int nout)
                dtclose, gclose, gopen);
         printf("    fewbody %d   gfew %g   etafew %g\n", fewbody, gfew, etafew);
         printf("    rcoll %g Rsun   mergers %d\n", rcoll, mergers);
+        if (usetree) printf("    usetree 1   theta %g   nleaf %d   ntreebuild %d   etatree %g\n",
+                            theta, nleaf, ntreebuild, etatree);
         if (useac) printf("    useac 1   nnbopt %d   nnbmax %d   etar %g\n", nnbopt, nnbmax, etar);
         else printf("    useac 0\n");
         printf("    trestart %g Myr (0 = no restart files)\n", trestart);
@@ -470,6 +473,9 @@ void statusout(int iout, int nout, double time, int64_t nblock, int64_t nforce)
             printf("   few-body groups         formed %lld, opened %lld this interval;  triples "
                    "frozen so far %lld;  steps %lld\n", (long long)(nfewformed - nfewformed0),
                    (long long)(nfewopened - nfewopened0), (long long)nfrozen, (long long)nfewsteps);
+        if (usetree)
+            printf("   tree nodes              %12d   builds so far %lld\n", nnode,
+                   (long long)ntreebuilt);
         if (useac)
             printf("   neighbour scheme        %lld full sums, %lld neighbour sums this interval\n",
                    (long long)(nregular - nregular0), (long long)(nirregular - nirregular0));
@@ -561,6 +567,7 @@ static void hdrphysics(FILE *f)
     if (closebinaries) strcat(phys, " binaries");
     if (fewbody) strcat(phys, " few_body");
     if (rcoll > 0.0) strcat(phys, mergers ? " mergers" : " collision_stop");
+    if (usetree) strcat(phys, " tree");
     if (useac) strcat(phys, " neighbour_scheme");
     hdrs(f, "physics", phys);
     hdrs(f, "tidal", tidal);
@@ -597,6 +604,12 @@ static void hdrphysics(FILE *f)
     if (useac) {
         hdri(f, "neighbours_wanted", nnbopt);
         hdrd(f, "etar", etar);
+    }
+    if (usetree) {
+        hdrd(f, "tree_opening_angle", theta);
+        hdri(f, "tree_nleaf", nleaf);
+        hdri(f, "tree_rebuild_interval", ntreebuild);
+        hdrd(f, "etatree", etatree);
     }
 }
 

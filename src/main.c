@@ -7,8 +7,8 @@
  * pairwise free-fall/flyby), higher-order predictor, P(EC)^n, Galactic
  * tide, Ahmad-Cohen neighbour scheme, binaries / few-body groups /
  * frozen triples as one body, mergers, restart files and ensembles.
- * Direct summation only: the Barnes-Hut tree is only in the archived
- * Fortran version (archive/fortran).
+ * Forces by direct summation, the neighbour scheme (ac.c) or the
+ * Barnes-Hut tree (tree.c).
  *
  * usage:   ./hermite params.nml  [ member ]
  *
@@ -163,7 +163,7 @@ static void runensemble(const char *exe)
 
 int main(int argc, char **argv)
 {
-    int iout0 = 0, nout, nsnap = 0, nana = 0, nrest = 0, member = 0, iout;
+    int nsince = 0, iout0 = 0, nout, nsnap = 0, nana = 0, nrest = 0, member = 0, iout;
     int64_t nblock = 0, nforce = 0, tblock;
     double time = 0.0, tbase;
     char fname[2 * NSTR];
@@ -200,6 +200,7 @@ int main(int argc, char **argv)
         accheck(ntot);          /* (switched off if there are too few stars) */
         if (useac) acalloc();
     }
+    if (usetree) treealloc();
 
     nout = (int)lround((tend - time0) / tout);
     if (nout < 1) {
@@ -248,6 +249,10 @@ int main(int argc, char **argv)
      * main loop - over output intervals, then over blocks */
     for (iout = iout0 + 1; iout <= nout; iout++) {
         tbase = (time0 + (double)(iout - 1) * tout) / tunit;
+        /* the tree is rebuilt at the first block of every output interval,
+         * so that a run restarted at an output time is exactly the same as
+         * an unbroken one */
+        nsince = ntreebuild;
         for (;;) {
             /* next block time and the active particles (in order of index) */
             tblock = INT64_MAX;
@@ -273,6 +278,20 @@ int main(int argc, char **argv)
                     vp[i][k] = v[i][k] + f0[i][k] * dtp + f1[i][k] * d2 + f2e[i][k] * d3
                                + f3e[i][k] * d4;
                 }
+            }
+
+            /* tree: rebuild it every ntreebuild block steps (or after a group
+             * was closed or opened, or stars merged); on the steps in between
+             * only restock it - recompute the moments from the new predicted
+             * positions */
+            if (usetree) {
+                if (!treevalid || nsince >= ntreebuild) {
+                    treebuild();
+                    nsince = 0;
+                } else {
+                    treemoments();
+                }
+                nsince++;
             }
 
             /* base for the corrector of the active stars: the 3rd-order

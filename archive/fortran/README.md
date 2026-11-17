@@ -2,12 +2,9 @@
 
 This is the original Fortran version of the HENDOS N-body code. **It is no
 longer the version in use.** That is the C code in `HENDOS/src`, built as
-`run/hermite`. The Fortran is kept for two reasons:
-
-- **It is the only version with the Barnes-Hut tree** (`&tree`, `usetree`).
-- It is the reference that the C code was translated from, routine by
-  routine. `src/README.md` here describes every Fortran routine, and the C
-  functions have the same names.
+`run/hermite`. The Fortran is kept as the reference that the C code was
+translated from, routine by routine: `src/README.md` here describes every
+Fortran routine, and the C functions have the same names.
 
 The initial conditions generator `makeics` is still Fortran, but it is not
 archived. It is in `HENDOS/src/ics` and is built by `HENDOS/run/Makefile`.
@@ -45,7 +42,6 @@ To run the regression tests on it:
 cd HENDOS/tests
 python3 run_tests.py --hermite ../archive/fortran/run/hermite_fortran
 ```
-On this version the tree test runs too, rather than being skipped.
 
 ## What the C translation found (fixed in both versions)
 
@@ -72,3 +68,12 @@ On this version the tree test runs too, rather than being skipped.
    regularisation, so perturbed hard binaries are integrated directly. In
    binary-rich clusters `eta` = 0.02 gave energy errors of 1e-2 or worse,
    while 0.01 gave about 1e-4.
+5. **The tree and the timesteps** (found when the tree was put into the C
+   code). The tree force on a star jumps a little whenever a box switches
+   between being used whole and being opened. The Hermite corrector reads
+   the jumps as large higher derivatives, and the Aarseth criterion then makes
+   the steps far too short: a 4,000-star tree run took 9 times as many steps
+   as direct summation. The C code fixes this with `etatree` (no step shorter
+   than `etatree` |a|/|j|); **this Fortran does not have that fix**. The C
+   code also rebuilds the tree at every output time, so restarts are exact,
+   and does not use the tree for nearest-neighbour searches.

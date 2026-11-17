@@ -2,8 +2,8 @@
 
 The N-body code `hermite` is written in C, in the files below. The initial
 conditions generator `makeics` is written in Fortran, in `ics/`. The
-original Fortran N-body code is kept in `../archive/fortran`. It is the only
-version with the Barnes-Hut tree (see `../archive/fortran/README.md`).
+original Fortran N-body code is kept in `../archive/fortran` (see
+`../archive/fortran/README.md`).
 
 **Keep this file up to date: when a function is added, moved, renamed or changes
 what it does, change its entry here in the same edit.**
@@ -18,6 +18,7 @@ what it does, change its entry here in the same edit.**
 | `io.c` | input and output: initial conditions, diagnostics, screen, snapshots, headers, in-run analysis |
 | `force.c` | gravity: forces, jerks, tide, energies; timestep levels |
 | `ac.c` | the Ahmad-Cohen neighbour scheme |
+| `tree.c` | the Barnes-Hut tree |
 | `few.c` | the few-body integrator and the triple stability test (stand-alone) |
 | `groups.c` | binaries, few-body groups, frozen triples, collisions and mergers |
 | `restart.c` | binary restart files |
@@ -81,6 +82,9 @@ No calculations, only declarations of everything shared between the files:
      regular step of the neighbour scheme also gets its regular correction.
   4. accept the step (`acaccept`) and choose new levels (`newlevel`,
      `aclevel`)
+  (with the tree, between 2 and 3: rebuild it every `ntreebuild` blocks, at
+  the first block of every output interval and after any group change, and
+  otherwise restock it with `treemoments`)
   5. `collcheck` and `bincheck`
 
   At the end of each output interval it calls `statusout`, `snapshot`,
@@ -108,8 +112,7 @@ No calculations, only declarations of everything shared between the files:
 - `safename(s)` - true if a name has only letters, digits, - _ and .
 - `readparams(pfile)` - sets the standard value of every parameter, reads the
   file, checks the values and converts the tide and a few others to internal
-  units. `usetree = .true.` stops the run, because there is no tree in this
-  version.
+  units. With the tree on, the neighbour scheme is switched off.
 
 ## io.c - input and output
 Set-up
@@ -164,16 +167,19 @@ Files
 - `direct(i,par)` (internal) - force on one active body, with the tide, into
   `f0p`, `f1p`.
 - `forces` - forces on all the active bodies: the neighbour scheme if
-  `useac`, otherwise parallel over the active bodies (big blocks) or over
-  the j-sum (small blocks).
+  `useac`, the tree if `usetree` (walks shared over the active bodies),
+  otherwise parallel over the active bodies (big blocks) or over the j-sum
+  (small blocks).
 - `energy(ke,pot,ptid)` - kinetic, potential and tidal energy (direct sum),
   and the potential `phi` of every body.
 - `getlevel(dtw)` - the timestep level of a wanted step, limited by `kmax`.
 - `commlev(k,t8)` - the nearest level that fits the block structure at the
   current time.
-- `firststep` - forces on everyone at the start, and the first levels.
+- `firststep` - forces on everyone at the start (building the tree first if
+  it is on), and the first levels.
 - `newlevel(i)` - the new level of body `i` after its step: the smaller of
-  the Aarseth and pairwise criteria, down by any amount, up one level only
+  the Aarseth and pairwise criteria (with the tree the Aarseth step is never
+  shorter than `etatree` |a|/|j|; why is explained above the function), down by any amount, up one level only
   when the time allows.
 
 ## ac.c - Ahmad-Cohen neighbour scheme (only when `useac` is on)
@@ -194,6 +200,31 @@ The scheme is explained at the top of the file.
 - `acmoverow(src,dst)`, `acmoved(src,dst)`, `acremoved(j,irep)`,
   `acadded(jn,i0)` - keep every list right when a body is moved, removed or
   created.
+
+## tree.c - Barnes-Hut tree (only when `usetree` is on)
+How the tree works, the force formulae and how it is shared over the threads
+are explained at the top of the file.
+- `treealloc` - allocates the node arrays.
+- `treebuild` - builds the octree for the current predicted positions, then
+  calls `treemoments`. The root's eight octants are built in parallel, one per
+  thread (2, 4 or 8 threads share them evenly; no more than 8 are used): each
+  thread looks through all the bodies for those in its octant and builds that
+  subtree in its own region of the node arrays; the regions are then closed
+  up, so the tree is identical to a serial build.
+- `buildnode(...)` (internal) - recursive: sorts a node's bodies into octants
+  and makes its children.
+- `octant`, `childcentre` (internal) - which octant a position is in; the
+  centre of a child box.
+- `treemoments` - mass, centre of mass, quadrupole and octupole moments, the
+  time derivative of the quadrupole, velocity and size of every node. Called
+  every block between rebuilds (restocking).
+- `nodemoments(node)`, `addpoint`, `shiftadd` (internal) - an internal node's
+  moments from its children; adding a body; the parallel-axis shift.
+- `treeforce(i,a,jk,tmin2,rm2)` - acceleration, jerk, shortest pairwise time
+  and nearest distance for body `i` by walking the tree. Opened leaves are
+  summed exactly as in `sumrange` in `force.c` (keep the two the same).
+- `octc`, `matvec` (internal) - the octupole contraction; a 3x3 product.
+- `treeperturb(...)` - the perturbation sum on a group, used by `gperturb`.
 
 ## few.c - few-body tools (uses nothing else)
 - `fewacc(...)` (internal) - accelerations and jerks inside a group, the
@@ -231,13 +262,15 @@ Collisions and mergers
   another and merges them (or stops).
 
 Neighbours and perturbations
-- `gperturb(...)` - the perturbation gamma on a (possible) group.
+- `gperturb(...)` - the perturbation gamma on a (possible) group (from the
+  tree when it is on and up to date).
 - `grpgamma(i,tnow)` - gamma of the group whose c.o.m. body is `i`.
 - `nearestx(i,jex)` - the nearest body to `i`, not counting `jex`.
 
 Closing and opening
 - `moverow(src,dst)` - copies all the data of one body to another slot.
-- `startbody(nl,list,t8,levmin)` - forces and first steps of new bodies.
+- `startbody(nl,list,t8,levmin)` - forces and first steps of new bodies
+  (rebuilding the tree first if it is on).
 - `closegroup(nm,list,mode,t8,tnow)` - replaces stars by one c.o.m. body.
 - `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars,
   booking the energy change of a frozen triple in `efrozen`.

@@ -65,7 +65,7 @@ Options:
 |---|---|---|---|---|
 | `direct` | direct sums | on | on | yes - the like-for-like comparison |
 | `neighbours` | direct sums with the Ahmad-Cohen neighbour scheme | on | on | yes |
-| `tree` | Barnes-Hut tree (archived Fortran only: give `--hermite ../archive/fortran/run/hermite_fortran`) | on | on | not like for like: the forces are approximate |
+| `tree` | Barnes-Hut tree | on | on | not like for like: the forces are approximate |
 | `nofew` | direct sums | on | off | shows what the few-body groups gain |
 | `nobin` | direct sums | off | off | shows what the binary treatment gains |
 
@@ -147,9 +147,9 @@ In the output directory:
 - When the initial conditions generator can make primordial binaries and
   triples, repeat the Plummer test with them: that is the case the few-body
   groups and frozen triples were written for.
-- For HENDOS also try `--threads` equal to your number of cores, and (with
-  the archived Fortran, which has the tree) `--modes tree`, noting that
-  neither is like for like with serial kira.
+- For HENDOS also try `--threads` equal to your number of cores, and
+  `--modes tree` at large N, noting that neither is like for like with serial
+  kira.
 
 Run each test a few times with different seeds: single runs vary.
 

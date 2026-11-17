@@ -407,10 +407,17 @@ static void collision(int i, int j, double rsep, double q, double tnow)
 
 /* perturbation gamma on a (possible) group of mass mb and size gsize
  * at xc from all bodies except the nex in ex, and the squared shortest
- * pairwise free-fall/flyby time of its c.o.m. Uses rp, vp. */
+ * pairwise free-fall/flyby time of its c.o.m. Uses rp, vp, and the
+ * tree when it is on and up to date. */
 static void gperturb(const double xc[3], const double vcm[3], double mb, double gsize, int nex,
                      const int *ex, double *gam, double *tp2)
 {
+    if (usetree && treevalid) {
+        double sum3t;
+        treeperturb(xc, vcm, mb, nex, ex, &sum3t, tp2);
+        *gam = 2.0 * gsize * gsize * gsize / mb * sum3t;
+        return;
+    }
     double sum3 = 0.0, t2 = HUGE_VAL;
 #pragma omp parallel for reduction(+:sum3) reduction(min:t2) schedule(static) if (n >= nompj)
     for (int j = 0; j < n; j++) {
@@ -490,6 +497,7 @@ static void startbody(int nl, const int *list, int64_t t8, int levmin)
     aclast = 1;
     nact = nl;
     for (int ia = 0; ia < nl; ia++) ilist[ia] = list[ia];
+    if (usetree) treebuild();
     forces();
     for (int ia = 0; ia < nl; ia++) {
         int l = list[ia];
@@ -551,6 +559,7 @@ static void mergestars(int i, int j, int64_t t8, double tnow)
     n--;
     ntot--;
     nmerged++;
+    treevalid = 0;
     startbody(1, &lo, t8, 0);
 }
 
@@ -714,6 +723,7 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
         }
         n--;
     }
+    treevalid = 0;
     /* with the neighbour scheme the c.o.m. body needs its own list and
      * force split, so it is started with a full force sum */
     if (useac) {
@@ -781,6 +791,7 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
     }
     nbin--;
     if (mode == 1) nopened++; else nfewopened++;
+    treevalid = 0;
     /* forces on the stars and their first timesteps (at least the c.o.m.
      * level, so the step divides t8) */
     startbody(*nm, list, t8, levc);

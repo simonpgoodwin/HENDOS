@@ -56,8 +56,8 @@ EXT int nensemble, nparallel, ensfirst, ensmember;
 EXT char ensbase[64];
 EXT int useac, nnbopt, nnbmax;
 EXT double etar;
-EXT int usetree, nleaf, ntreebuild;    /* read, but the tree is only in the archived Fortran */
-EXT double theta;
+EXT int usetree, nleaf, ntreebuild;    /* Barnes-Hut tree (tree.c) */
+EXT double theta, etatree;             /* opening angle; tree timestep parameter */
 EXT int nompmin, nompj, nthreads;
 
 /* ---- units and the block-timestep clock ------------------------- */
@@ -67,6 +67,8 @@ EXT int64_t tend8;                     /* ticks in one output interval */
 
 /* ---- the bodies ------------------------------------------------- */
 EXT int n, ntot, nalloc, nbin, nact;   /* bodies, stars, array size, groups, active */
+EXT int nnode, treevalid;              /* tree nodes; the tree matches the bodies */
+EXT int64_t ntreebuilt;                /* tree builds so far */
 EXT double time0, comshift[3], covshift[3];
 EXT char icformat[64];
 EXT vec3 *r, *v, *rp, *vp, *rc, *vc, *f0, *f1, *f0p, *f1p, *f2, *f3, *f2e, *f3e;
@@ -160,6 +162,13 @@ void grpcomp(int k, const double xc[3], const double vc_[3], double tnow, int *n
              vec3 xm[KFMAX], vec3 um[KFMAX]);
 double grpeint(int nm, const double *mm, vec3 xm[KFMAX], vec3 um[KFMAX]);
 void collcheck(int64_t t8, double tnow);
+/* tree.c */
+void treealloc(void);
+void treebuild(void);
+void treemoments(void);
+void treeforce(int i, double a[3], double jk[3], double *tmin2, double *rm2);
+void treeperturb(const double xc[3], const double vc[3], double mb, int nex, const int *ex,
+                 double *sum3, double *tp2);
 void bincheck(int64_t t8, double tnow);
 void binstart(double tnow);
 /* restart.c */

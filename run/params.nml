@@ -193,8 +193,6 @@
 
 !-----------------------------------------------------------------------
 !   BARNES-HUT TREE   -   for large associations on large scales
-!   ONLY IN THE ARCHIVED FORTRAN VERSION (archive/fortran): the C code
-!   in use stops with a message if usetree = .true.
 !-----------------------------------------------------------------------
 !   Forces from an octree with monopole, quadrupole and octupole moments
 !   instead of direct summation. Energies are still direct-N, and the
@@ -203,7 +201,8 @@
 &tree
 
   usetree = .false.        ! [.false.] .true. = tree forces
-                           !   (worth it for N above a few thousand)
+                           !   (worth it above about 10,000 stars;
+                           !    switches the neighbour scheme off)
 
   theta   = 0.5            ! [0.5]  opening angle, between 0 and 1:
                            !   smaller = more accurate and slower
@@ -218,6 +217,12 @@
                            !   which is cheaper. Larger = fewer rebuilds
                            !   but slower tree walks; accuracy is not
                            !   affected
+
+  etatree = 0.03           ! [0.03] with the tree no timestep is made
+                           !   shorter than etatree |a|/|da/dt|: the
+                           !   tree force jumps a little as boxes are
+                           !   opened and closed, which would otherwise
+                           !   make the steps far too short
 
 /
 

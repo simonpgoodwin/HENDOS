@@ -22,7 +22,8 @@ ICS     = $(SRC)/ics
 
 # the N-body code: one header and these files (see ../src/README.md)
 CFILES  = $(SRC)/main.c $(SRC)/params.c $(SRC)/io.c $(SRC)/force.c \
-          $(SRC)/ac.c $(SRC)/few.c $(SRC)/groups.c $(SRC)/restart.c
+          $(SRC)/ac.c $(SRC)/few.c $(SRC)/groups.c $(SRC)/restart.c \
+          $(SRC)/tree.c
 
 all: hermite makeics
 

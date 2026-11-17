@@ -53,7 +53,7 @@ HENDOS/
   tests/                 regression tests (Python)
     README.md            what the tests are and how to add one
     run_tests.py         runs hermite on problems with known answers
-  archive/fortran/       the old Fortran N-body code (the only one with the tree)
+  archive/fortran/       the old Fortran N-body code
     README.md            what it is, how to build it, what changed
     src/, run/Makefile   its source, routine guide and Makefile
   HENDOS_logo.jpg        the HENDOS logo
@@ -286,16 +286,30 @@ sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
 - **Restart files** (`trestart`, `restart`): the complete state in binary,
   written at output times, from which a run carries on exactly. The file is a
   list of named sections that a reader can skip, so new physics can add its own.
-- **Barnes-Hut tree** (`&tree`): **only in the archived Fortran version**
-  (`archive/fortran`). The C code stops with a message if `usetree` is on.
-  The tree is an octree with monopole, quadrupole and octupole moments and
-  opening angle `theta`, rebuilt every `ntreebuild` block steps.
+- **Barnes-Hut tree** (`&tree`, `src/tree.c`): an octree with monopole,
+  quadrupole and octupole moments and opening angle `theta`; the jerk from the
+  monopole plus the internal-motion quadrupole term. Rebuilt every
+  `ntreebuild` block steps and at every output time, and restocked (moments
+  recomputed) on the steps in between. With the tree no timestep is shorter
+  than `etatree` |a|/|j|, because the small jumps in the tree force as boxes
+  open and close would otherwise make the Aarseth steps far too short.
+  The tree pays above about 10,000 stars (1.8 times faster than direct
+  summation at 16,000 on two cores, about 3 times at 64,000). The tide works
+  with the tree; energies stay direct.
 
 ## Parallelisation (OpenMP)
 Every loop whose cost grows with N is parallel; the number of threads is set
 with `OMP_NUM_THREADS` and printed at the start of a run.
 - **Forces**: parallel over active stars for big blocks (>= `nompmin`) or over
-  the j-sum with reductions for small blocks (N >= `nompj`).
+  the j-sum with reductions for small blocks (N >= `nompj`); tree walks
+  parallel over active stars.
+- **Tree build**: shared out at the top level - the root's eight octants are
+  built by separate threads, each looking through all the particles for those
+  in its octant. 2, 4 or 8 threads share the octants evenly and no more than 8
+  are used. The tree is identical to a serial build (a test checks that runs
+  with one and two threads agree to the last digit).
+- **Tree moments**: parallel over the leaves, then over the top-level subtrees
+  for the internal nodes.
 - **Each block**: block-time search, predictor, corrector, acceptance and new
   timestep levels.
 - **Neighbour scheme**: big blocks share out the active stars; for small
@@ -307,11 +321,10 @@ with `OMP_NUM_THREADS` and printed at the start of a run.
 Still serial, because they are cheap or rare: making the list of active
 particles, the binary and collision bookkeeping between blocks, the few-body
 integrator (a handful of stars), output and the in-run analysis.
-(The archived Fortran also builds its tree in parallel: see `archive/fortran/src/README.md`.)
 
 ## The archived Fortran version
 HENDOS was first written in Fortran, and that version is kept in
-`archive/fortran`. It is the only version with the Barnes-Hut tree. It reads
+`archive/fortran`. It reads
 and writes the same files as the C code (except restart files), so every tool
 works with either. It has never been compiled. See
 `archive/fortran/README.md`, which also lists the bugs that were found when
@@ -328,16 +341,16 @@ the code was translated to C, and fixed in both.
   the window short.
 
 ## Testing
-`tests/run_tests.py` runs `hermite` on 17 small problems with known answers
+`tests/run_tests.py` runs `hermite` on 20 small problems with known answers
 (two-body orbits, the Pythagorean problem, a frozen triple, a Plummer sphere
-by direct sums, with the neighbour scheme, the tree and a tide, a merger,
-restarts, ensembles, header flexibility) and checks each against a tolerance.
-The tree test is skipped for the C code, which has no tree. Run it after
-every change. See `tests/README.md`.
+by direct sums, with the neighbour scheme, the tree and a tide, the tree with
+binaries, with one and two threads and through a restart, a merger, restarts,
+ensembles, header flexibility) and checks each against a tolerance. Run it
+after every change. See `tests/README.md`.
 
 ## Status
-The N-body code (C) has been compiled with gcc 13 and run. It passes all 16
-regression tests that apply to it, also with gcc's address and
+The N-body code (C) has been compiled with gcc 13 and run. It passes all 20
+regression tests, also with gcc's address and
 undefined-behaviour checks on, and it has been run on clusters with many
 primordial binaries. The algorithms were also checked with Python models as
 they were written (Hermite with block steps, the tide, binaries, the
