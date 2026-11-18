@@ -73,12 +73,16 @@ from starlabio import (G_PHYS, Units, hendos_to_dyn, kinetic_energy,   # noqa: E
 # HOW THE CODES ARE RUN - check these against your installation
 # ----------------------------------------------------------------------
 # kira reads a dyn file on standard input, writes snapshots to standard
-# output and its log to standard error. All in N-body units.
-#   -t  end time            -d  interval between log outputs
-#   -D  interval between snapshots        -a  accuracy parameter
-# Add anything else your kira needs here (for example the option that
-# switches on unperturbed binary motion, or a softening).
-KIRA_CMD = 'kira -t {tend} -d {dt} -D {dt} -a {eta}'
+# output and its log to standard error. All in N-body units. The options,
+# as kira_init.C of Starlab 4.4 reads them:
+#   -t  length of the run (delta_t)       -d  interval between log outputs
+#   -D  interval between snapshots (a number; 'all', 'x<n>' etc. mean
+#       other things)                     -a  accuracy parameter eta
+#   -e  softening (0, as HENDOS)          -u  switch unperturbed binary
+#                                             motion on (HENDOS does the same)
+# Run  python bench_kira.py <ic file> --check  first: it runs kira for one
+# output interval on the stars and checks that what comes back makes sense.
+KIRA_CMD = '{kira} -t {tend} -d {dt} -D {dt} -a {eta} -e 0 -u'
 
 # HENDOS is run in its own directory with the parameter file written below.
 HERMITE_CMD = '{hermite} params.nml'
@@ -174,10 +178,11 @@ def half_mass_curve(snaps):
 
 
 # ----------------------------------------------------------------------
-def run_kira(out, units, tend, dt, eta):
+def run_kira(out, units, tend, dt, eta, kira='kira'):
     """One kira run. Returns a dictionary of results, and the snapshots in physical units."""
     tag = 'kira_eta%g' % eta
-    command = KIRA_CMD.format(tend=repr(tend / units.time), dt=repr(dt / units.time), eta=eta)
+    command = KIRA_CMD.format(kira=kira, tend=repr(tend / units.time), dt=repr(dt / units.time),
+                              eta=eta)
     dyn_out = os.path.join(out, tag + '.dyn')
     with open(os.path.join(out, 'ic.dyn')) as fin, open(dyn_out, 'w') as fout, \
             open(os.path.join(out, tag + '.log'), 'w') as flog:
@@ -312,6 +317,66 @@ def make_plots(out, results, curves, title):
     fig.savefig(os.path.join(out, 'bench_halfmass.png'), dpi=150, facecolor=SURFACE)
 
 
+def check(a, out, units, ic, e0, dt):
+    """Run kira and HENDOS (direct) for one output interval on the stars and
+    check that both read them, reach the end, keep every star and conserve
+    energy, and that the two agree on where the stars are. Returns 0 if all
+    is well."""
+    import shutil
+    good = True
+
+    def report(ok, text):
+        print('   %s  %s' % ('ok  ' if ok else 'FAIL', text))
+        return ok
+
+    print('\nCHECK: one output interval (%.4g Myr) with each code' % dt)
+    if shutil.which(a.kira) is None and not os.path.exists(a.kira):
+        report(False, 'cannot find kira (%s) - put it on your path or give --kira' % a.kira)
+        good = False
+        ksnaps = []
+    else:
+        kres, ksnaps = run_kira(out, units, dt, dt / 2, a.eta_kira[-1], a.kira)
+        print('   kira command:  %s' % kres['command'])
+        good &= report(kres['ok'], 'kira ran (log: %s)' % os.path.join(out, 'kira_eta%g.log'
+                                                                     % a.eta_kira[-1]))
+        good &= report(len(ksnaps) > 0, 'kira wrote snapshots that could be read (%d)'
+                       % len(ksnaps))
+        if ksnaps:
+            last = ksnaps[-1]
+            good &= report(last.n == ic.n, 'kira kept every star (%d of %d)' % (last.n, ic.n))
+            good &= report(abs(last.time - dt) < 1e-3 * dt,
+                           'kira reached the end (%.6g of %.6g Myr) - so its time units '
+                           'are being converted correctly' % (last.time, dt))
+            e1 = total_energy(last.m, last.pos, last.vel, G_PHYS)
+            good &= report(abs(e1 - e0) < 1e-3 * abs(e0),
+                           'kira energy error %.2e (should be small)' % (abs(e1 - e0) / abs(e0)))
+    hres, hsnaps = run_hendos(out, a.icfile, a.hermite, dt, dt / 2, a.eta_hendos[-1],
+                              a.threads, 'direct')
+    good &= report(hres['ok'] and len(hsnaps) > 0, 'HENDOS ran (log: %s)'
+                   % os.path.join(out, 'hendos_direct_eta%g' % a.eta_hendos[-1], 'hermite.log'))
+    if hsnaps:
+        last = hsnaps[-1]
+        e1 = total_energy(last.m, last.pos, last.vel, G_PHYS)
+        good &= report(abs(e1 - e0) < 1e-3 * abs(e0),
+                       'HENDOS energy error %.2e (should be small)' % (abs(e1 - e0) / abs(e0)))
+        if ksnaps:
+            # the same stars in the same order: compare positions, relative
+            # to the size of the system
+            k, h = ksnaps[-1], last
+            if k.n == h.n:
+                size = np.sqrt((ic.pos ** 2).sum(1).mean())
+                ik = np.argsort(k.id) if hasattr(k, 'id') else np.arange(k.n)
+                ih = np.argsort(h.id)
+                kp = k.pos[ik] - (k.m[:, None] * k.pos).sum(0) / k.m.sum()
+                hp = h.pos[ih] - (h.m[:, None] * h.pos).sum(0) / h.m.sum()
+                diff = np.median(np.sqrt(((kp - hp) ** 2).sum(1))) / size
+                good &= report(diff < 1e-2, 'kira and HENDOS agree on the positions after '
+                               'one interval (median difference %.1e of the rms radius)' % diff)
+    print('\nAll is well: run the benchmark.' if good else
+          '\nSomething is wrong: look at the logs above before running the benchmark.')
+    return 0 if good else 1
+
+
 def main():
     p = argparse.ArgumentParser(description='Benchmark HENDOS against Starlab kira.')
     p.add_argument('icfile', help='HENDOS initial conditions file (from makeics)')
@@ -330,6 +395,10 @@ def main():
                    help='OpenMP threads for HENDOS [1, as kira is serial]')
     p.add_argument('--out', default=None, help='directory for everything [bench_<ic name>]')
     p.add_argument('--skip-kira', action='store_true', help='do not run kira')
+    p.add_argument('--kira', default='kira', help='the kira executable [kira, on your path]')
+    p.add_argument('--check', action='store_true',
+                   help='only check that kira and HENDOS run on these stars and agree '
+                        'for one output interval, then stop')
     p.add_argument('--skip-hendos', action='store_true', help='do not run HENDOS')
     a = p.parse_args()
 
@@ -345,6 +414,9 @@ def main():
     print('one N-body time unit = %.5f Myr, so tend = %.3f N-body units'
           % (units.time, a.tend / units.time))
 
+    if a.check:
+        return check(a, out, units, ic, e0, dt)
+
     results, curves = [], {}
     jobs = []
     if not a.skip_hendos:
@@ -355,7 +427,7 @@ def main():
         label = series_style(series)['label']
         print('running %s with eta = %g ...' % (label, eta), flush=True)
         if series == 'kira':
-            result, snaps = run_kira(out, units, a.tend, dt, eta)
+            result, snaps = run_kira(out, units, a.tend, dt, eta, a.kira)
         else:
             result, snaps = run_hendos(out, a.icfile, a.hermite, a.tend, dt, eta, a.threads,
                                        series)
@@ -408,4 +480,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

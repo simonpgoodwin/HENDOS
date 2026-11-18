@@ -11,38 +11,80 @@ change this in the same edit.**
 
 | File | What it is |
 |---|---|
-| `bench_kira.py` | runs both codes, times them, measures the energy errors, makes the table and plots |
+| `run_benchmarks.sh` | **start here**: builds everything, makes the stars, checks kira, runs the whole set of tests |
+| `ics/*.nml` | the initial conditions of the tests, for `makeics` |
+| `bench_kira.py` | runs both codes on one set of stars, times them, measures the energy errors, makes the table and plots |
 | `starlabio.py` | converts a HENDOS file to Starlab's `dyn` format, and reads `dyn` files (kira output) |
 
 Needs Python 3 with `numpy` and `matplotlib`, the `analysis` directory next to
-this one, HENDOS built (`make` in `run/`), and `kira` on your path.
+this one, a C compiler with OpenMP and gfortran (to build `hermite` and
+`makeics`), and Starlab's `kira`.
 
-## Before the first run
-Two things could not be checked where this was written, because neither kira
-nor a compiled HENDOS was available there:
+## The quick way
+```
+cd HENDOS/benchmark
+./run_benchmarks.sh quick        one small test (a few minutes), to see that all is well
+./run_benchmarks.sh              the standard set (an hour or so)
+./run_benchmarks.sh big          the standard set and 16,000 stars (many hours)
+KIRA=/path/to/kira SEEDS="1 2 3" ./run_benchmarks.sh
+```
+The script builds `hermite` and `makeics`, makes the initial conditions of
+every test, runs the check described below, and stops there if the check
+fails. Then it runs `bench_kira.py` on every test. Each test gets its own
+directory, `results/<test>_s<seed>/`, and all the tables are collected in
+`results/summary.txt`. Settings (kira's path, the seeds, threads) are given in
+front of the command and are listed at the top of the script, as are the
+tests:
 
-1. **The kira command line.** It is one line near the top of `bench_kira.py`:
-   ```
-   KIRA_CMD = 'kira -t {tend} -d {dt} -D {dt} -a {eta}'
-   ```
-   Check the options against `kira --help` for your version, and add anything
-   your runs need (for example the option for unperturbed binary motion).
-2. **The dyn files.** Try the converter on its own and let kira read the
-   result for a short run:
-   ```
-   python starlabio.py ../run/data/plum1k.dat test.dyn
-   kira -t 1 < test.dyn > /dev/null
-   ```
+| Test | Stars | To (Myr) | HENDOS modes | What it tests |
+|---|---|---|---|---|
+| `plummer_eq_1k` | 1000 equal-mass, Plummer, r_h = 1 pc | 10 | direct, neighbours | the basic integrators |
+| `plummer_imf_1k` | 1000 from the Maschberger IMF, Plummer | 10 | direct, neighbours | the same with a mass spectrum |
+| `fractal_cool_1k` | 1000, box fractal D = 1.6, Q = 0.3 | 5 | direct, nofew, nobin | binaries and multiples forming, and what the binary and few-body treatments are worth |
+| `plummer_eq_4k` | 4000 equal-mass, Plummer | 4 | direct, neighbours | where the neighbour scheme starts to pay |
+| `plummer_eq_16k` (big only) | 16,000 equal-mass, Plummer | 1 | direct, neighbours, tree | large N, and the tree |
 
-The scripts themselves were tested end to end with stand-in programs in place
-of the two codes, including kira-style output with a binary written as a
-nested pair. Since the modes were added only the HENDOS side has been tested
-again in that way (three modes, table and plots).
+Each runs for a few crossing times. Single runs vary, so use several seeds
+(`SEEDS="1 2 3"`) for anything you quote. The fractal fails to build for
+roughly one seed in ten (see `src/ics/FRACTAL_README.md`); the script reports
+that and skips the test for that seed.
 
-## Running it
+## The kira command line and the check
+The kira command is one line near the top of `bench_kira.py`:
+```
+KIRA_CMD = '{kira} -t {tend} -d {dt} -D {dt} -a {eta} -e 0 -u'
+```
+The options are as `kira_init.C` of Starlab 4.4 reads them: `-t` the length of
+the run, `-d` the interval between log outputs, `-D` (with a number) the
+interval between snapshots, `-a` the accuracy parameter eta, `-e` the
+softening (0, as in HENDOS) and `-u` to switch on kira's unperturbed binary
+motion (HENDOS treats unperturbed binaries specially too, so this is the like
+for like comparison). Times are in N-body units, converted by the script.
+
+The options were read from the Starlab source, but kira itself has not been
+run with them here (there was no kira where this was written). So **run the
+check first** - the script does it for you, or by hand:
+```
+cd HENDOS/run
+python ../benchmark/bench_kira.py data/plum1k.dat --tend 5 --check
+```
+It runs kira and HENDOS for one output interval on the stars and checks that
+kira ran, wrote snapshots that can be read, kept every star, reached the end
+time (which shows the units are converted correctly) and conserved energy;
+that HENDOS did the same; and that the two codes agree on where the stars are
+after the interval. It ends with "All is well" or says what failed.
+
+The scripts, the check and the driver were tested end to end here with a
+stand-in for kira (a small leapfrog integrator that reads and writes dyn files
+and takes kira's options), including all five HENDOS modes, two seeds, the
+tables, the plots and the summary.
+
+## Running bench_kira.py by hand
+For your own initial conditions:
 ```
 cd HENDOS/run
 ./makeics ics.nml                                   (writes data/plum1k.dat)
+python ../benchmark/bench_kira.py data/plum1k.dat --tend 5 --check
 python ../benchmark/bench_kira.py data/plum1k.dat --tend 5
 python ../benchmark/bench_kira.py data/plum1k.dat --tend 5 --modes direct neighbours
 ```
@@ -59,6 +101,8 @@ Options:
 | `--threads` | OpenMP threads for HENDOS | 1 |
 | `--out` | directory for everything | `bench_<ic file name>` |
 | `--skip-kira`, `--skip-hendos` | run only one of the codes | |
+| `--kira` | the kira executable | `kira` (on your path) |
+| `--check` | only run the check described above, then stop | |
 
 ## The HENDOS modes
 | Mode | Forces | Binaries | Few-body groups | Compare with kira? |

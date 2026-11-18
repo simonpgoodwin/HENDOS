@@ -1,0 +1,19 @@
+! HENDOS benchmark initial conditions: cool box fractal (D = 1.6, Q = 0.3), 1000 stars, radius 1 pc - forms binaries and multiples
+! made by run_benchmarks.sh with   ./makeics ../benchmark/ics/fractal_cool_1k.nml
+! (the script changes seed and outfile for each seed it runs)
+&ics
+  outfile = 'data/bench_fractal_cool_1k.dat'
+  n       = 1000
+  seed    = 12345
+  distribution = 'fractal'
+  radius  = 1.0
+  qvir    = 0.3
+/
+&fractal
+  fdim = 1.6
+  velocities = 'standard'
+/
+&masses
+  imf = 'maschberger'
+  mequal = 1.0
+/

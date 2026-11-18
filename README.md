@@ -46,7 +46,9 @@ HENDOS/
     hendosio.py          reads snapshots and run-time analysis files; finds ensembles
     hendosensemble.py    puts the results of an ensemble together
     maketestdata.py      test files for trying the viewer
-  benchmark/             comparing with other codes (Python)
+  benchmark/             comparing with kira (Python and a shell script)
+    run_benchmarks.sh    builds, checks and runs the whole benchmark
+    ics/                 initial conditions of the benchmark tests
     README.md            how to run the comparison and read it
     bench_kira.py        runs HENDOS and Starlab's kira on the same stars
     starlabio.py         converts to and from Starlab's dyn format
@@ -110,11 +112,14 @@ behind it can be used in your own scripts, and a new analysis is one function
 in `analysis/hendosanalysis.py`. See `analysis/README.md`.
 
 ## Benchmarking
-`benchmark/bench_kira.py` runs the same initial conditions through HENDOS and
-Starlab's `kira` at several accuracy settings, measures wall-clock time and
-energy error in the same way for both, and plots time against error so the
-codes are compared at equal accuracy. See `benchmark/README.md`. No benchmark
-has been run yet.
+`benchmark/run_benchmarks.sh` runs a set of standard tests (Plummer spheres
+of 1000 and 4000 stars, with and without a mass spectrum, and a cool fractal
+that forms binaries) through HENDOS and Starlab's `kira`, at several accuracy
+settings each, after first checking that kira reads the stars and that the
+two codes agree. It measures wall-clock time and energy error in the same way
+for both, and plots time against error so the codes are compared at equal
+accuracy. `./run_benchmarks.sh quick` tries it out in a few minutes. See
+`benchmark/README.md`. No benchmark against kira has been run yet.
 
 ## Data directory
 Snapshots and analysis files are written to the directory `datadir` in the

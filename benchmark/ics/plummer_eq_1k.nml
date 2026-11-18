@@ -1,0 +1,19 @@
+! HENDOS benchmark initial conditions: equal-mass Plummer sphere, 1000 stars, half-mass radius 1 pc
+! made by run_benchmarks.sh with   ./makeics ../benchmark/ics/plummer_eq_1k.nml
+! (the script changes seed and outfile for each seed it runs)
+&ics
+  outfile = 'data/bench_plummer_eq_1k.dat'
+  n       = 1000
+  seed    = 12345
+  distribution = 'plummer'
+  radius  = 1.0
+  qvir    = 0.5
+/
+&fractal
+  fdim = 1.6
+  velocities = 'standard'
+/
+&masses
+  imf = 'equal'
+  mequal = 1.0
+/

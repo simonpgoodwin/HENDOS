@@ -12,6 +12,8 @@ run/data/*
 
 # benchmark and test output
 bench_*/
+benchmark/results/
+benchmark/build.log
 testdata/
 
 # Python
