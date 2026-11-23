@@ -40,12 +40,14 @@ tests:
 |---|---|---|---|---|
 | `plummer_eq_1k` | 1000 equal-mass, Plummer, r_h = 1 pc | 10 | direct, neighbours | the basic integrators |
 | `plummer_imf_1k` | 1000 from the Maschberger IMF, Plummer | 10 | direct, neighbours | the same with a mass spectrum |
-| `fractal_cool_1k` | 1000, box fractal D = 1.6, Q = 0.3 | 5 | direct, nofew, nobin | binaries and multiples forming, and what the binary and few-body treatments are worth |
+| `fractal_cool_1k` | 1000, box fractal D = 1.6, Q = 0.3 | 5 | direct, neighbours, nofew, nobin | binaries and multiples forming, and what the binary and few-body treatments are worth |
 | `plummer_eq_4k` | 4000 equal-mass, Plummer | 4 | direct, neighbours | where the neighbour scheme starts to pay |
 | `plummer_eq_16k` (big only) | 16,000 equal-mass, Plummer | 1 | direct, neighbours, tree | large N, and the tree |
 
-Each runs for a few crossing times. Single runs vary, so use several seeds
-(`SEEDS="1 2 3"`) for anything you quote. The fractal fails to build for
+Each runs for a few crossing times. Single runs vary a lot (the first
+benchmarks showed a factor of ten between runs that differed only in `eta`),
+so the script runs **three seeds by default** (`SEEDS="1 2 3"`); give more for
+anything you quote, or one (`SEEDS=12345`) for a quick look. The fractal fails to build for
 roughly one seed in ten (see `src/ics/FRACTAL_README.md`); the script reports
 that and skips the test for that seed.
 
@@ -132,12 +134,24 @@ a parameter that is not yet in it, a line to `HENDOS_PARAMS` just above.
    given, timing each run.
 3. Works out the energy error of every run **in the same way for both
    codes**: by direct summation over the stars of the initial conditions and
-   of the last snapshot. Neither code's own energy report is used.
+   of every snapshot. Neither code's own energy report is used. The figure
+   plotted is the **largest** |dE/E| at any snapshot; the error at the end is
+   given too, but on its own it is a poor measure, because the error can
+   change sign during a run and a run can end with a tiny error by luck
+   (both codes did so in the first benchmarks).
 4. For every HENDOS run, takes from the header of its last snapshot what the
    binary and few-body machinery did (binaries closed, few-body groups formed,
    triples frozen) and HENDOS's own energy error, and checks that the number
    of stars has not changed.
 5. Writes a table and two plots.
+
+HENDOS has two timestep parameters besides `eta`: `etap` (the pairwise
+free-fall and flyby limit) and, with neighbours, `etar`. The script ties both
+to `eta` (`etap` = 5 `eta`, `etar` = 0.5 `eta`; `ETAP_OVER_ETA` and
+`ETAR_OVER_ETA` in `bench_kira.py`) so that all three tighten together. In the
+first benchmarks `etap` was left at 0.2, and the close encounters then set a
+floor to the accuracy: cutting `eta` from 0.04 to 0.01 reduced the error only
+three times, where it should have been a hundred.
 
 HENDOS is run with the collision check off (`rcoll = 0`), so there are **no
 mergers**: kira without stellar radii does not merge stars, and a merger
@@ -150,9 +164,9 @@ In the output directory:
 
 | File | What |
 |---|---|
-| `results.txt`, `results.json` | wall-clock time and energy error of every run |
-| `bench_time_error.png` | wall-clock time against energy error, one curve for kira and one for each HENDOS mode |
-| `bench_halfmass.png` | half-mass radius against time for the most accurate run of each |
+| `results.txt`, `results.json` | wall-clock time, largest and final energy error of every run |
+| `bench_time_error.png` | wall-clock time against largest energy error, one curve for kira and one for each HENDOS mode |
+| `bench_halfmass.png` | half-mass radius against time for every run: the most accurate of each code or mode thick, the others thin |
 | `ic.dyn`, `ic.dyn.units.json` | the stars in Starlab format, and the units |
 | `kira_eta<..>.dyn`, `.log` | kira's snapshots and log for each run |
 | `hendos_<mode>_eta<..>/` | HENDOS parameter file, log (verbose) and snapshots for each run |
@@ -162,10 +176,14 @@ In the output directory:
   same thing in the two codes. On `bench_time_error.png` pick an energy error
   and read off the time for each code: the lower curve is faster at that
   accuracy. That is why several accuracy values are run.
-- **Check the physics agrees.** The two half-mass radius curves should lie on
-  top of each other at first and then drift apart slowly, as any two N-body
-  runs of the same stars do. A large difference from the start means the two
-  codes were not given the same problem.
+- **Check the physics agrees.** The half-mass radius curves should lie on
+  top of each other at first and then drift apart, as any two N-body runs of
+  the same stars do. After a cold collapse, or once hard binaries form, the
+  drift is chaotic and fast, so compare the *spread* of one code's curves (its
+  runs at different `eta`) with the spread of the other's, and the averages
+  over seeds - not one curve with one curve. A difference larger than both
+  spreads, in every seed, would be worth looking into; a large difference
+  from the very start means the two codes were not given the same problem.
 - **Check every run reached the end.** The table says so if one did not.
 - **Compare the two energy errors of each HENDOS run.** The table gives the
   error measured here from the snapshots and, in the notes, HENDOS's own

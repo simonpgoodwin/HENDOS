@@ -67,7 +67,8 @@ python3 run_tests.py --hermite ../archive/fortran/run/hermite_fortran
 4. **The standard `eta` is now 0.01** (it was 0.02). There is no
    regularisation, so perturbed hard binaries are integrated directly. In
    binary-rich clusters `eta` = 0.02 gave energy errors of 1e-2 or worse,
-   while 0.01 gave about 1e-4.
+   while 0.01 gave about 1e-4. (The C version has since made `etap` 0.1 as
+   well; the Fortran keeps `etap` = 0.2.)
 5. **The tree and the timesteps** (found when the tree was put into the C
    code). The tree force on a star jumps a little whenever a box switches
    between being used whole and being opened. The Hermite corrector reads

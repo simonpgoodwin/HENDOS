@@ -298,7 +298,7 @@ void readparams(const char *pfile)
     strcpy(tidal, "none");
     oorta = 15.3; oortb = -11.9; rho0 = 0.097; omegat = 0.0;   /* Bovy 2017; McKee+ 2015 */
     memset(tij, 0, sizeof tij);
-    eta = 0.01; etap = 0.2; etas = 0.01; niter = 1; kmax = 40;
+    eta = 0.01; etap = 0.1; etas = 0.01; niter = 1; kmax = 40;
     closebinaries = 1; fewbody = 1; gfew = 1.e-5; etafew = 0.02;
     rcoll = 10.0; mergers = 1; restart_ = 0; trestart = 0.0;
     nensemble = 1; nparallel = 1; ensfirst = 1;

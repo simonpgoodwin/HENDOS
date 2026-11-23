@@ -105,7 +105,8 @@ HENDOS_PARAMS = """&run
   tana = 0.0
 /
 &integrator
-  eta = {eta}
+  eta  = {eta}
+  etap = {etap}
 /
 &binaries
   closebinaries = {closebinaries}
@@ -131,8 +132,12 @@ HENDOS_PARAMS = """&run
 #   colour, marker  how it is drawn (colours checked for colour-blind readers;
 #                   the markers and the labels on the curves back them up)
 #   the rest        values for the {..} places in HENDOS_PARAMS
-# etar is the neighbour scheme's accuracy parameter; it is set to half of eta
-# in every run ('etar_over_eta') so the two tighten together.
+# HENDOS has two timestep parameters as well as eta: etap, the pairwise
+# free-fall/flyby limit, and (neighbour scheme) etar. Both are tied to eta in
+# every run so that all three tighten together - with etap held fixed the
+# close encounters set a floor to the accuracy and smaller eta buys nothing
+# (found in the first benchmarks: with etap = 0.2 cutting eta from 0.04 to
+# 0.01 only reduced the error 3 times; with etap = 5 eta it is 100 times).
 HENDOS_MODES = {
     'direct':     dict(label='HENDOS direct', colour='#2a78d6', marker='o',
                        closebinaries=True, fewbody=True, useac=False, usetree=False),
@@ -146,6 +151,7 @@ HENDOS_MODES = {
                        closebinaries=False, fewbody=False, useac=False, usetree=False),
 }
 ETAR_OVER_ETA = 0.5
+ETAP_OVER_ETA = 5.0
 KIRA_STYLE = dict(label='kira', colour='#eb6834', marker='s')
 
 # header keys of the last HENDOS snapshot kept in the results (if present)
@@ -205,7 +211,7 @@ def run_hendos(out, icfile, hermite, tend, dt, eta, threads, mode):
     with open(os.path.join(rundir, 'params.nml'), 'w') as f:
         f.write(HENDOS_PARAMS.format(
             icfile=os.path.abspath(icfile), tend=tend, dt=dt, eta=eta,
-            etar=ETAR_OVER_ETA * eta, closebinaries=fbool(opts['closebinaries']),
+            etar=ETAR_OVER_ETA * eta, etap=ETAP_OVER_ETA * eta, closebinaries=fbool(opts['closebinaries']),
             fewbody=fbool(opts['fewbody']), useac=fbool(opts['useac']),
             usetree=fbool(opts['usetree'])))
     env = dict(os.environ, OMP_NUM_THREADS=str(threads))
@@ -213,8 +219,8 @@ def run_hendos(out, icfile, hermite, tend, dt, eta, threads, mode):
     with open(os.path.join(rundir, 'hermite.log'), 'w') as flog:
         wall, code = run_timed(command, cwd=rundir, stdout=flog, stderr=subprocess.STDOUT,
                                env=env)
-    result = dict(code='HENDOS', series=mode, eta=eta, wall_s=wall, ok=(code == 0),
-                  command=command, threads=threads)
+    result = dict(code='HENDOS', series=mode, eta=eta, etap=ETAP_OVER_ETA * eta, wall_s=wall,
+                  ok=(code == 0), command=command, threads=threads)
     snaps = []
     if code == 0:
         run = Run(datadir, 'bench')
@@ -230,13 +236,22 @@ def run_hendos(out, icfile, hermite, tend, dt, eta, threads, mode):
 
 
 def finish(result, snaps, e0, tend, n0):
-    """Add the energy error and end time to a result, from the last snapshot."""
+    """Add the energy errors and end time to a result, from the snapshots.
+
+    energy_error_end  |E - E0| / |E0| at the last snapshot
+    energy_error      the largest |E - E0| / |E0| at any snapshot - the one
+                      used in the plots and table. The error at the end alone
+                      is noisy: it can change sign during a run, so a single
+                      run can by chance end with a tiny error (both codes did
+                      in the first benchmarks).
+    """
     if not snaps:
         result['ok'] = False
         return
+    errs = [abs(total_energy(s.m, s.pos, s.vel, G_PHYS) - e0) / abs(e0) for s in snaps]
     last = snaps[-1]
-    e1 = total_energy(last.m, last.pos, last.vel, G_PHYS)
-    result['energy_error'] = abs(e1 - e0) / abs(e0)
+    result['energy_error_end'] = errs[-1]
+    result['energy_error'] = max(errs)
     result['t_end_Myr'] = float(last.time)
     result['n_end'] = int(last.n)
     result['n_changed'] = bool(last.n != n0)
@@ -289,7 +304,7 @@ def make_plots(out, results, curves, title):
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.margins(x=0.22)
-    ax.set_xlabel('relative energy error at the end   (numbers on the points: eta)',
+    ax.set_xlabel('largest relative energy error during the run   (numbers on the points: eta)',
                   color=TEXT2)
     ax.set_ylabel('wall-clock time (s)', color=TEXT2)
     ax.set_title(title, color=TEXT, loc='left', fontsize=11)
@@ -298,15 +313,24 @@ def make_plots(out, results, curves, title):
     fig.tight_layout()
     fig.savefig(os.path.join(out, 'bench_time_error.png'), dpi=150, facecolor=SURFACE)
 
-    # half-mass radius against time, most accurate run of each
+    # half-mass radius against time, every run: the most accurate run of each
+    # code or mode thick, the others thin. After a cold collapse, or once
+    # binaries form, runs diverge chaotically - so compare the spread of the
+    # curves of one code with that of the other, not one curve with one curve.
     fig, ax = plt.subplots(figsize=(8.0, 5.0), facecolor=SURFACE)
     for series in order:
-        if series in curves:
-            st = series_style(series)
-            t, rh, eta = curves[series]
-            ax.plot(t, rh, color=st['colour'], lw=2, label='%s (eta=%g)' % (st['label'], eta))
-            ax.annotate('  ' + st['label'], (t[-1], rh[-1]), color=TEXT2, va='center',
-                        fontsize=9)
+        runs = sorted((key for key in curves if key[0] == series), key=lambda key: key[1])
+        st = series_style(series)
+        for i, key in enumerate(runs):
+            t, rh = curves[key]
+            best = (i == 0)
+            ax.plot(t, rh, color=st['colour'], lw=2 if best else 0.9,
+                    alpha=1.0 if best else 0.55,
+                    label=('%s (eta=%s)' % (st['label'], ', '.join('%g' % k[1] for k in runs))
+                           if best else None))
+            if best:
+                ax.annotate('  ' + st['label'], (t[-1], rh[-1]), color=TEXT2, va='center',
+                            fontsize=9)
     ax.margins(x=0.18)
     ax.set_xlabel('time (Myr)', color=TEXT2)
     ax.set_ylabel('half-mass radius (pc)', color=TEXT2)
@@ -434,11 +458,9 @@ def main():
         finish(result, snaps, e0, a.tend, int(ic.n))
         results.append(result)
         if result['ok']:
-            print('   %.2f s, energy error %.2e' % (result['wall_s'], result['energy_error']))
-            best = curves.get(series)
-            if best is None or eta < best[2]:
-                t, rh = half_mass_curve(snaps)
-                curves[series] = (t, rh, eta)
+            print('   %.2f s, largest energy error %.2e' % (result['wall_s'],
+                                                          result['energy_error']))
+            curves[(series, eta)] = half_mass_curve(snaps)
         else:
             print('   FAILED - see the log in %s' % out)
 
@@ -446,8 +468,8 @@ def main():
     with open(os.path.join(out, 'results.json'), 'w') as f:
         json.dump(dict(icfile=a.icfile, n=int(ic.n), tend_Myr=a.tend, results=results), f, indent=1)
     lines = [title, '',
-             '%-19s %7s %10s %13s %10s  %s' % ('run', 'eta', 'wall (s)', 'energy error',
-                                              'end (Myr)', 'notes')]
+             '%-19s %7s %10s %13s %13s %10s  %s' % ('run', 'eta', 'wall (s)', 'max |dE/E|',
+                                                    'end |dE/E|', 'end (Myr)', 'notes')]
     for r in results:
         label = series_style(r['series'])['label']
         if r['ok']:
@@ -458,6 +480,8 @@ def main():
                 notes.append('NUMBER OF STARS CHANGED to %d' % r['n_end'])
             if r['code'] == 'HENDOS':
                 notes.append('%d thread(s)' % r['threads'])
+                if r.get('etap'):
+                    notes.append('etap %g' % r['etap'])
                 if 'own_energy_error' in r:
                     notes.append('own dE/E %.1e' % r['own_energy_error'])
                 if 'binaries_closed' in r:
@@ -465,11 +489,12 @@ def main():
                 if 'few_body_groups_formed' in r:
                     notes.append('few-body %d, frozen %d' % (r['few_body_groups_formed'],
                                                             r.get('triples_frozen', 0)))
-            lines.append('%-19s %7g %10.2f %13.3e %10.4f  %s'
+            lines.append('%-19s %7g %10.2f %13.3e %13.3e %10.4f  %s'
                          % (label, r['eta'], r['wall_s'], r['energy_error'],
-                            r['t_end_Myr'], ', '.join(notes)))
+                            r['energy_error_end'], r['t_end_Myr'], ', '.join(notes)))
         else:
-            lines.append('%-19s %7g %10s %13s %10s  FAILED' % (label, r['eta'], '-', '-', '-'))
+            lines.append('%-19s %7g %10s %13s %13s %10s  FAILED'
+                         % (label, r['eta'], '-', '-', '-', '-'))
     text = '\n'.join(lines)
     with open(os.path.join(out, 'results.txt'), 'w') as f:
         f.write(text + '\n')

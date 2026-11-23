@@ -34,7 +34,7 @@
 #   name             tend  HENDOS modes             what it tests
 #   plummer_eq_1k     10   direct neighbours        the basic integrators
 #   plummer_imf_1k    10   direct neighbours        the same with a mass spectrum
-#   fractal_cool_1k    5   direct nofew nobin       binaries and multiples forming
+#   fractal_cool_1k    5   direct neighbours nofew nobin   binaries and multiples forming
 #   plummer_eq_4k      4   direct neighbours        where the neighbour scheme pays
 #   plummer_eq_16k     1   direct neighbours tree   (big only) large N, and the tree
 # Each runs to a few crossing times; the energy errors are measured in the
@@ -45,7 +45,7 @@ cd "$(dirname "$0")"
 BENCH=$(pwd)
 RUN=$(cd ../run && pwd)
 KIRA=${KIRA:-kira}
-SEEDS=${SEEDS:-12345}
+SEEDS=${SEEDS:-"1 2 3"}
 THREADS=${THREADS:-1}
 MAKE=${MAKE:-1}
 FORCE=${FORCE:-0}
@@ -55,7 +55,7 @@ SET=${1:-standard}
 QUICK=(  "plummer_eq_1k   2  direct neighbours" )
 STANDARD=( "plummer_eq_1k  10  direct neighbours"
            "plummer_imf_1k 10  direct neighbours"
-           "fractal_cool_1k 5  direct nofew nobin"
+           "fractal_cool_1k 5  direct neighbours nofew nobin"
            "plummer_eq_4k   4  direct neighbours" )
 BIG=(      "plummer_eq_16k  1  direct neighbours tree" )
 

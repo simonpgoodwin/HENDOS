@@ -481,10 +481,27 @@ hard binaries are integrated directly, and in clusters rich in them 0.02 gave
 energy errors of 1e-2 or worse where 0.01 gave about 1e-4, for about 25% more
 time. Without many hard binaries 0.02 is enough and faster.
 
-### `etap` (standard value 0.2)
-A safety net. No particle's timestep may be longer than `etap` times the
-shortest time it would take to fall on to, or fly past, any other particle. It
-catches fast close encounters that the Aarseth criterion sees too late.
+### `etap` (standard value 0.1)
+No particle's timestep may be longer than `etap` times the shortest time it
+would take to fall on to, or fly past, any other particle. It catches fast
+close encounters that the Aarseth criterion sees too late - and in practice it
+sets the timesteps of most close encounters, so **it sets the accuracy of the
+run as much as `eta` does**. If you make `eta` smaller to get a more accurate
+run, make `etap` smaller too, or the close encounters will set a floor to the
+accuracy. As a guide, measured on an equal-mass Plummer sphere of 1000 stars
+over 10 Myr:
+
+| `eta` | `etap` | energy error | time |
+|---|---|---|---|
+| 0.01 | 0.2 | 8.0e-8 | 22 s |
+| 0.0025 | 0.2 | 5.1e-9 | 43 s |
+| 0.02 | 0.1 | 3.9e-8 | 19 s |
+| 0.01 | 0.1 (standard) | 1.7e-8 | 25 s |
+| 0.01 | 0.05 | 3.0e-9 | 33 s |
+| 0.005 | 0.05 | 8.7e-10 | 38 s |
+
+So `etap` = 5 to 10 times `eta` is the efficient choice. The standard value
+was 0.2 until the first benchmarks against kira showed this.
 
 ### `etas` (standard value 0.01)
 Sets the very first timestep of each particle (as `etas` times acceleration

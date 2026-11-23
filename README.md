@@ -249,6 +249,8 @@ sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
 - 4th-order Hermite (Makino & Aarseth 1992), block timesteps in powers of two on
   an exact integer clock, all stars synchronised every `tout`.
 - dt = min(Aarseth criterion, `etap` x shortest pairwise free-fall/flyby time).
+  `etap` (standard 0.1) sets the accuracy of close encounters, so tighten it
+  with `eta` (`etap` = 5 to 10 `eta`).
 - Predictor uses each star's a2, a3 from its last step (keeps 4th order with the
   velocity-dependent Coriolis force of the tide).
 - Smallest step `tout/2**kmax`; steps limited there are reported.

@@ -297,9 +297,11 @@
                    !         smaller = more accurate and slower
                    !         (0.02 is enough without many hard binaries)
 
-  etap  = 0.2      ! [0.2]   safety net: no step longer than etap times
-                   !         the shortest pairwise free-fall or flyby
-                   !         time - catches fast close encounters
+  etap  = 0.1      ! [0.1]   no step longer than etap times the
+                   !         shortest pairwise free-fall or flyby time.
+                   !         Sets the accuracy of close encounters:
+                   !         tighten it together with eta (etap = 5 to
+                   !         10 eta), or it sets a floor to the accuracy
 
   etas  = 0.01     ! [0.01]  sets the very first timestep
 
