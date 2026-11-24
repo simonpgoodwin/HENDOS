@@ -970,10 +970,6 @@ static inline void gpair(double mj, const double d[3], const double dv[3], doubl
     }
 }
 
-/* the correction (see the top of this file) to the force a and jerk jk
- * of body i at internal time tb, from the predicted rp, vp: as the c.o.m.
- * of a regularised group, and as a perturber of others. Returns 0 if
- * there is none. The perturber index must be up to date. */
 /* internal dynamical time sqrt(s^3/M) of a group of nm stars, s its
  * diameter */
 static double tdyngrp(int nm, const double *mm, vec3 *x)
@@ -1000,6 +996,12 @@ static inline void pairtime(double mi, double ms, const double d[3], const doubl
     if (r2 < *r2m) *r2m = r2;
 }
 
+/* the correction (see the top of this file) to the force a and jerk jk
+ * of body i at internal time tb, from the predicted rp, vp: as the c.o.m.
+ * of a regularised group, and as a perturber of others; also the shortest
+ * dynamical time of those groups (tdg), and the shortest pairwise time
+ * squared (tp2) and distance squared (r2m) to their stars. Returns 0 if
+ * there is none. The perturber index must be up to date. */
 static int corrfor(int i, double tb, double a[3], double jk[3], double *tdg, double *tp2,
                    double *r2m)
 {
