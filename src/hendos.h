@@ -30,6 +30,7 @@
 #endif
 
 #define KFMAX 6            /* most stars in a group */
+#define NPMAX 64           /* most perturbers of a regularised group (ar.c) */
 #define NTYPES 5           /* particle types */
 #define NSTR 512
 typedef double vec3[3];
@@ -49,7 +50,7 @@ EXT int ltide;
 EXT double eta, etap, etas;
 EXT int niter, kmax;
 EXT int closebinaries, fewbody;
-EXT double dtclose, dtclosei, gclose, gopen, gfew, etafew;
+EXT double dtclose, dtclosei, gclose, gopen, gfew, etafew, artol, gpert;
 EXT double rcoll, rcolli;
 EXT int mergers;
 EXT int nensemble, nparallel, ensfirst, ensmember;
@@ -64,6 +65,7 @@ EXT int nompmin, nompj, nthreads;
 EXT double vunit, tunit;               /* km/s and Myr per internal unit */
 EXT double dtmax, tick;                /* output interval, one tick (internal) */
 EXT int64_t tend8;                     /* ticks in one output interval */
+EXT double tbase;                      /* internal time of integer clock zero */
 
 /* ---- the bodies ------------------------------------------------- */
 EXT int n, ntot, nalloc, nbin, nact;   /* bodies, stars, array size, groups, active */
@@ -77,7 +79,11 @@ EXT int *id, *itype, *ib, *lev, *ilist;
 EXT int64_t *tk, *dtk;
 
 /* ---- groups: stars treated as one c.o.m. body (see groups.c) ---- */
-EXT int *bnum, *bmode;                 /* stars in the group; 1 binary, 2 few-body, 3 triple */
+EXT int *bnum, *bmode;                 /* stars in the group; 1 binary, 2 regularised, 3 triple */
+EXT int *bcm;                          /* slot of the group's c.o.m. body */
+EXT double *bend;                      /* regularised: integrated up to this time (ar.c) */
+EXT int64_t *bend8;                    /* ... the same in the integer clock */
+EXT int *npl, (*plist)[NPMAX];         /* regularised: its perturbers (slots) */
 EXT double (*bmass)[KFMAX], (*brel)[6], (*brel2)[6], *bepoch;
 EXT double *bein;                     /* frozen triple: its internal energy when frozen */
 EXT int (*bident)[KFMAX], (*btype)[KFMAX];
@@ -93,7 +99,7 @@ EXT int aclast;
 
 /* ---- counters ---------------------------------------------------- */
 EXT int64_t nclamp, nclosed, nopened, nfewformed, nfewopened, nfrozen;
-EXT int64_t nfewsteps, nmerged, nregular, nirregular;
+EXT int64_t narsteps, nmerged, nregular, nirregular;
 EXT double emerged;                   /* orbital energy removed by mergers */
 EXT double efrozen;                   /* energy change of the triples unfrozen so far */
 
@@ -148,9 +154,20 @@ void acmoverow(int src, int dst);
 void acmoved(int src, int dst);
 void acremoved(int j, int irep);
 void acadded(int jn, int i0);
+/* ar.c */
+void aralloc(int ng);
+void arreset(int k);
+void armovegroup(int from, int to);
+void premap(int from, int to);
+void ardirty(void);
+void arstart(int k, int64_t t8);
+void arshift(int k);
+int arstate(int k, double t, double *mm, vec3 *x, vec3 *u);
+void aradvance(int64_t tb8);
+void arsync(double tsync);
+void arcorrect(void);
+double arpotcorr(double t, int pred);
 /* few.c */
-void fewint(int nm, const double *mm, vec3 *x, vec3 *vv, double tint, double etaf,
-            double e2, double rc2, double *tdone, int *ic, int *jc, int64_t *nst);
 void elements(double mu, const double rr[3], const double vr[3], double *a, double *ecc,
               double h[3]);
 void hierarchy(const double mm[3], vec3 x[3], vec3 vv[3], int *stable, int *i1, int *i2,
@@ -161,6 +178,10 @@ void kepler(double mu, const double r0[3], const double v0[3], double dt, double
 void grpcomp(int k, const double xc[3], const double vc_[3], double tnow, int *nm,
              vec3 xm[KFMAX], vec3 um[KFMAX]);
 double grpeint(int nm, const double *mm, vec3 xm[KFMAX], vec3 um[KFMAX]);
+int groupmergetype(int t1, int t2);
+void groupmergelog(double tnow, int id1, double m1, int t1, int id2, double m2, int t2,
+                   int idn, double mn, int tn, const double xn[3], const double vn[3],
+                   double rsep);
 void collcheck(int64_t t8, double tnow);
 /* tree.c */
 void treealloc(void);

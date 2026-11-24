@@ -165,7 +165,7 @@ int main(int argc, char **argv)
 {
     int nsince = 0, iout0 = 0, nout, nsnap = 0, nana = 0, nrest = 0, member = 0, iout;
     int64_t nblock = 0, nforce = 0, tblock;
-    double time = 0.0, tbase;
+    double time = 0.0;
     char fname[2 * NSTR];
     double tracet1 = 0.0, tracet2 = 0.0, tracee = 0.0;
     if (getenv("HENDOS_TRACE")) sscanf(getenv("HENDOS_TRACE"), "%lf %lf", &tracet1, &tracet2);
@@ -225,6 +225,7 @@ int main(int argc, char **argv)
     tick = dtmax / ldexp(1.0, kmax);
     tend8 = (int64_t)1 << kmax;
 
+    tbase = time0 / tunit;
     if (restart_) {
         if (nana > 0) ana_init();
     } else {
@@ -262,6 +263,10 @@ int main(int argc, char **argv)
             nact = 0;
             for (int i = 0; i < n; i++)
                 if (tk[i] + dtk[i] == tblock) ilist[nact++] = i;
+
+            /* regularised groups whose c.o.m. has started a new step are
+             * integrated ahead to the end of that step (ar.c) */
+            if (fewbody) aradvance(tblock);
 
             /* predictor - ALL particles to tblock for the force calculation,
              * with f2e, f3e (2nd and 3rd derivatives from each star's last
@@ -384,6 +389,7 @@ int main(int argc, char **argv)
             if (useac) treg[i] -= tend8;
         }
         time = time0 + (double)iout * tout;
+        if (fewbody) arsync(time / tunit);
 
         /* output: screen first - it also updates the diagnostics */
         statusout(iout, nout, time, nblock, nforce);

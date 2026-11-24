@@ -82,6 +82,10 @@ void allocarrays(void)
     brel2 = xalloc(sizeof(*brel2) * ng); bepoch = xalloc(sizeof(double) * ng);
     bein = xalloc(sizeof(double) * ng);
     bx = xalloc(sizeof(*bx) * ng); bv = xalloc(sizeof(*bv) * ng);
+    bcm = xalloc(sizeof(int) * ng); bend = xalloc(sizeof(double) * ng);
+    bend8 = xalloc(sizeof(int64_t) * ng);
+    npl = xalloc(sizeof(int) * ng); plist = xalloc(sizeof(*plist) * ng);
+    aralloc((int)ng);
     nalloc = n;
     for (int i = 0; i < n; i++) {
         ib[i] = -1;
@@ -291,6 +295,9 @@ void diagnose(double time)
         }
     }
     efrozennow = efrozen + ecorr;
+    /* regularised groups: their resolved interaction with their perturbers
+     * (the main integration sees them as point masses; see ar.c) */
+    epot += arpotcorr(time / tunit, 0);
     etot = ekin + epot + etid + emerged + efrozennow;
     double mt = 0.0;
     for (int k = 0; k < 3; k++) cm[k] = cv[k] = 0.0;
@@ -390,7 +397,7 @@ void startinfo(int nout)
         printf("    eps %g pc   nompmin %d   nompj %d   dewarn %g\n", eps, nompmin, nompj, dewarn);
         printf("    closebinaries %d   dtclose %g yr   gclose %g   gopen %g\n", closebinaries,
                dtclose, gclose, gopen);
-        printf("    fewbody %d   gfew %g   etafew %g\n", fewbody, gfew, etafew);
+        printf("    fewbody %d   gfew %g   artol %g   gpert %g\n", fewbody, gfew, artol, gpert);
         printf("    rcoll %g Rsun   mergers %d\n", rcoll, mergers);
         if (usetree) printf("    usetree 1   theta %g   nleaf %d   ntreebuild %d   etatree %g\n",
                             theta, nleaf, ntreebuild, etatree);
@@ -470,9 +477,9 @@ void statusout(int iout, int nout, double time, int64_t nblock, int64_t nforce)
             printf("   groups as one body      %d   (binaries closed %lld, opened %lld this interval)\n",
                    nbin, (long long)(nclosed - nclosed0), (long long)(nopened - nopened0));
         if (fewbody)
-            printf("   few-body groups         formed %lld, opened %lld this interval;  triples "
-                   "frozen so far %lld;  steps %lld\n", (long long)(nfewformed - nfewformed0),
-                   (long long)(nfewopened - nfewopened0), (long long)nfrozen, (long long)nfewsteps);
+            printf("   regularised groups      formed %lld, opened %lld this interval;  triples "
+                   "frozen so far %lld;  AR steps %lld\n", (long long)(nfewformed - nfewformed0),
+                   (long long)(nfewopened - nfewopened0), (long long)nfrozen, (long long)narsteps);
         if (usetree)
             printf("   tree nodes              %12d   builds so far %lld\n", nnode,
                    (long long)ntreebuilt);
@@ -565,7 +572,7 @@ static void hdrphysics(FILE *f)
     double fconv = 1.0 / (vunit * 1.e3);
     if (ltide) strcat(phys, " tide");
     if (closebinaries) strcat(phys, " binaries");
-    if (fewbody) strcat(phys, " few_body");
+    if (fewbody) strcat(phys, " few_body regularised");
     if (rcoll > 0.0) strcat(phys, mergers ? " mergers" : " collision_stop");
     if (usetree) strcat(phys, " tree");
     if (useac) strcat(phys, " neighbour_scheme");
@@ -591,6 +598,7 @@ static void hdrphysics(FILE *f)
         hdri(f, "few_body_groups_formed", nfewformed);
         hdri(f, "few_body_groups_opened", nfewopened);
         hdri(f, "triples_frozen", nfrozen);
+        hdri(f, "regularised_steps", narsteps);
         hdrd(f, "energy_change_frozen_triples", efrozennow * vunit * vunit);
     }
     if (rcoll > 0.0) {

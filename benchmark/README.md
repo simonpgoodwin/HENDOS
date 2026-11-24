@@ -2,7 +2,7 @@
 
 Runs the same stars through both codes and compares how long each takes to
 reach a given accuracy. HENDOS can do the same problem in several ways
-(direct sums, the neighbour scheme, the tree, with or without few-body
+(direct sums, the neighbour scheme, the tree, with or without regularised
 groups), so it is run in one or more *modes*, and each mode is compared with
 kira as a curve of its own.
 
@@ -107,13 +107,13 @@ Options:
 | `--check` | only run the check described above, then stop | |
 
 ## The HENDOS modes
-| Mode | Forces | Binaries | Few-body groups | Compare with kira? |
+| Mode | Forces | Kepler binaries | Regularised groups | Compare with kira? |
 |---|---|---|---|---|
 | `direct` | direct sums | on | on | yes - the like-for-like comparison |
 | `neighbours` | direct sums with the Ahmad-Cohen neighbour scheme | on | on | yes |
 | `tree` | Barnes-Hut tree | on | on | not like for like: the forces are approximate |
-| `nofew` | direct sums | on | off | shows what the few-body groups gain |
-| `nobin` | direct sums | off | off | shows what the binary treatment gains |
+| `nofew` | direct sums | on | off | shows what regularisation gains (perturbed binaries and close encounters integrated directly) |
+| `nobin` | direct sums | off | off | shows what the whole binary treatment gains |
 
 kira treats unperturbed binaries and multiples specially too, so `direct` and
 `neighbours` are the fair comparisons with it. `nofew` and `nobin` are there
@@ -187,15 +187,15 @@ In the output directory:
 - **Check every run reached the end.** The table says so if one did not.
 - **Compare the two energy errors of each HENDOS run.** The table gives the
   error measured here from the snapshots and, in the notes, HENDOS's own
-  (`own dE/E`). They should be close. If the one measured here is much larger,
-  look at the few-body groups: their stars are integrated without the
-  cluster's pull, which the snapshots show and HENDOS's own figure also
-  includes, so a large difference between modes `direct` and `nofew` at the
-  same `eta` points at `gfew` being too large.
+  (`own dE/E`). They should be close: HENDOS's own figure includes the
+  internal energy of every group and its interaction with its perturbers,
+  which the snapshots (all the stars) include too. A Kepler binary ignores
+  perturbations below `gopen`, which shows up here as a small difference.
 - **Look at what the binary machinery did.** The notes give the number of
-  binaries closed, few-body groups formed and triples frozen. A run that is
-  slow with none of these has not found its binaries; a run with thousands of
-  few-body groups is spending its time opening and closing them.
+  Kepler binaries closed, regularised groups formed and triples frozen. A run
+  that is slow with none of these has not found its binaries. A cool fractal
+  makes thousands of regularised groups in a few Myr (each close encounter
+  is one, briefly), which is as it should be.
 
 ## A fair set of tests
 - An equal-mass Plummer sphere (`imf = 'equal'`) at N = 1000, 4000 and 16000
@@ -204,11 +204,11 @@ In the output directory:
 - The same with the standard mass function.
 - A cool fractal (`distribution = 'fractal'`, `qvir = 0.3`), which forms
   binaries and multiples quickly, with `--modes direct nofew nobin`: this
-  tests how each code copes with them, and shows what the binary and few-body
-  treatments in HENDOS are worth.
+  tests how each code copes with them, and shows what the binary treatment
+  and regularisation in HENDOS are worth.
 - When the initial conditions generator can make primordial binaries and
-  triples, repeat the Plummer test with them: that is the case the few-body
-  groups and frozen triples were written for.
+  triples, repeat the Plummer test with them: that is the case the
+  regularised groups and frozen triples were written for.
 - For HENDOS also try `--threads` equal to your number of cores, and
   `--modes tree` at large N, noting that neither is like for like with serial
   kira.

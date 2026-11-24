@@ -45,7 +45,7 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `kepler_eccentric` | two stars, eccentricity 0.9, 10 periods, directly | energy |
 | `binary_closed` | the same binary treated as one body | exact Kepler orbit: energy to 1e-10, position, one group |
 | `pythagorean_direct` | Burrau's three-body problem to t = 10, directly | energy |
-| `pythagorean_fewbody` | the same as a few-body group, with nine light distant stars so that there are the 12 bodies a group of three needs | energy; a group was formed |
+| `pythagorean_fewbody` | the same as a regularised group, with nine light distant stars so that there are the 12 bodies a group of three needs | energy; a group was formed |
 | `fewbody_small_n` | the three stars alone | no group is formed (it would not pay); energy |
 | `triple_frozen` | a stable hierarchical triple, alone | frozen as two Kepler orbits even with three bodies; energy; inner orbit unchanged |
 | `plummer_direct` | 256-star Plummer sphere, 2 Myr, direct | energy; virial ratio; number of stars |
@@ -61,6 +61,11 @@ log, snapshots) are left in `tests/work/<test name>/` to look at.
 | `ensemble` | three sets of initial conditions run as one ensemble, all at once | every member finishes with its own snapshots, log and header labels; the members differ; when two members are added only those two are run |
 | `restart` | a run stopped half way and restarted | ends where the unbroken run ends (positions to 1e-9 pc) |
 | `restart_neighbours` | the same with the neighbour scheme | the same |
+| `perturbed_flyby` | a star passes a binary (a = 1e-4 pc, e = 0.5) at 5 binary sizes and 10 km/s; the binary a regularised pair all the time, against a very accurate direct run with no binary treatment (the encounter is not chaotic: two accurate direct runs agree to 1e-9) | the binary's semi-major axis (1e-6; the C code gives 2e-10) and eccentricity afterwards, the passing star's velocity, energy |
+| `triple_regularised` | a stable triple that is not frozen (gclose tiny), 20 outer orbits | regularised, not frozen; energy (1e-8; gives 2e-10); inner orbit kept |
+| `eccentric_plunge` | a binary with e = 0.9999 (pericentre 2 Rsun) whose apocentre reaches towards a third star | regularised while it plunges; energy (1e-6; gives 1e-9). This found the need to cap the steps of bodies near a group (`src/ar.c`, TIMESTEPS) |
+| `hyperbolic_plunge` | two stars on an unbound orbit pass within 2 Rsun | regularised as an unbound pair; energy; no steps held at kmax |
+| `restart_regularised` | a cluster with 30 binaries (regularised groups) stopped half way and restarted | ends exactly where the unbroken run ends (to the last digit) |
 
 The limits are deliberately loose enough not to fail for harmless reasons
 (a different compiler or number of threads) and tight enough to catch a real

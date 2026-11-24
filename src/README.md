@@ -19,8 +19,9 @@ what it does, change its entry here in the same edit.**
 | `force.c` | gravity: forces, jerks, tide, energies; timestep levels |
 | `ac.c` | the Ahmad-Cohen neighbour scheme |
 | `tree.c` | the Barnes-Hut tree |
-| `few.c` | the few-body integrator and the triple stability test (stand-alone) |
-| `groups.c` | binaries, few-body groups, frozen triples, collisions and mergers |
+| `few.c` | orbital elements and the triple stability test (stand-alone) |
+| `groups.c` | binaries, regularised groups, frozen triples, collisions and mergers: when groups are made, changed and broken up |
+| `ar.c` | the regularised integration of groups (algorithmic regularisation), their perturbers and their corrections to the main integration |
 | `restart.c` | binary restart files |
 | `ics/makeics.f90` and the five files with it | the initial conditions generator (Fortran) |
 
@@ -55,9 +56,12 @@ No calculations, only declarations of everything shared between the files:
   `run/PARAMS_README.md`), derived values, counters and the block clock
 - the particle arrays: positions, velocities, force derivatives, masses, ids,
   types (`itype`), group index (`ib`), timestep levels
-- the table of groups (binaries, few-body groups, frozen triples):
+- the table of groups (Kepler binaries, regularised groups, frozen triples):
   `bnum`, `bmode`, `bmass`, `bident`, `btype`, `brel`, `brel2`, `bx`, `bv`,
-  `bepoch`, `bein`, with up to `KFMAX` = 6 stars each
+  `bepoch`, `bein`, `bcm` (the slot of its c.o.m. body), and for regularised
+  groups `bend`, `bend8` (how far it has been integrated) and `npl`, `plist`
+  (its perturbers), with up to `KFMAX` = 6 stars and `NPMAX` = 64 perturbers
+  each
 - the neighbour-scheme arrays (split forces, neighbour lists, regular steps)
 - the prototype of every function used outside its own file, and the
   helpers `dot3`, `norm3`
@@ -75,7 +79,8 @@ No calculations, only declarations of everything shared between the files:
   calls `readic` (or `readrestart`), `accheck`, `firststep`, `collcheck`,
   `binstart`, `startinfo` and writes the first snapshot and analysis. Then
   comes the loop over output intervals, and inside it the loop over blocks:
-  1. find the next block time and the active bodies
+  1. find the next block time and the active bodies, and integrate ahead the
+     regularised groups that need it (`aradvance`)
   2. predict every body to that time (with each body's 2nd and 3rd force
      derivatives from its last step)
   3. `forces`, then correct the active bodies (`niter` times). A body on a
@@ -87,8 +92,8 @@ No calculations, only declarations of everything shared between the files:
   otherwise restock it with `treemoments`)
   5. `collcheck` and `bincheck`
 
-  At the end of each output interval it calls `statusout`, `snapshot`,
-  `ana_do` and `writerestart`, and at the end `ana_end` and `endinfo`.
+  At the end of each output interval it calls `arsync`, `statusout`,
+  `snapshot`, `ana_do` and `writerestart`, and at the end `ana_end` and `endinfo`.
   With the environment variable `HENDOS_TRACE="t1 t2"` it prints every
   block between t1 and t2 Myr in which the total energy changed by more than
   1e-7 (debugging only, because it costs an O(N²) sum per block).
@@ -227,17 +232,47 @@ are explained at the top of the file.
 - `treeperturb(...)` - the perturbation sum on a group, used by `gperturb`.
 
 ## few.c - few-body tools (uses nothing else)
-- `fewacc(...)` (internal) - accelerations and jerks inside a group, the
-  shortest pairwise time and the closest pair.
-- `fewint(nm,mm,x,v,tint,...)` - integrates an isolated group for a given
-  time with 4th-order Hermite and one shared step. It stops early if two
-  stars collide.
 - `elements(mu,rr,vr,a,ecc,h)` - semi-major axis, eccentricity and angular
   momentum of a two-body orbit.
 - `hierarchy(...)` - is a triple a stable hierarchy (Mardling & Aarseth
   2001)? It returns the inner pair, the outer star and the two orbits.
+(The old Hermite few-body integrator `fewint` has gone; it is in the archived
+Fortran.)
 
-## groups.c - binaries, few-body groups, collisions and mergers
+## ar.c - regularised groups
+How the integration works, how the perturbers are found, predicted and
+corrected for, when a group is integrated and how its steps are limited is
+explained at the top of the file.
+
+The integrator (internal, one group at a time, thread safe)
+- `accint`, `accext` - the stars' accelerations from each other (and U), and
+  the tidal accelerations of the perturbers.
+- `drift`, `kick`, `leapfrog` - the logarithmic-Hamiltonian leapfrog.
+- `gbs` - one Gragg-Bulirsch-Stoer step (2, 4, ..., 16 kicks, extrapolated).
+- `hcap` - the longest step that keeps the interpolation good (`ARCAP`).
+- `mkplist` - the perturber list, the Taylor series of the perturbers and of
+  the c.o.m., and the horizon (end of the c.o.m.'s or a strong perturber's
+  step). Weak perturbers whose steps end sooner are held still.
+- `arsetup`, `arintegrate` - set a group up and integrate it to its horizon,
+  landing on it exactly (secant iteration in s), merging stars that collide
+  (`armerge`) and keeping the dense output (`addnode`).
+
+Used by the rest of the code
+- `aralloc`, `arreset`, `armovegroup`, `premap`, `ardirty` - bookkeeping:
+  memory, a group leaving the table or moving in it, a body changing slot.
+- `arstart(k,t8)` - a group has just become regularised.
+- `aradvance(tb8)` - at the start of each block, integrates the groups that
+  are behind (in parallel).
+- `arstate(k,t,...)` - a group's stars at any time (interpolated).
+- `arshift(k)` - makes the end state the start state, removing merged ghosts.
+- `arsync(t)` - at the end of an output interval.
+- `arcorrect()` - at the end of every force calculation, the corrections to
+  the forces and jerks of the active bodies.
+- `arcapnew(k,t8)` (internal) - shortens the steps of bodies near a group
+  that has just been made.
+- `arpotcorr(t,pred)` - the energy of the corrections, for the energy check.
+
+## groups.c - binaries, regularised groups, collisions and mergers
 How groups are closed, opened and frozen is explained at the top of the file.
 
 Kepler orbits and groups
@@ -246,17 +281,18 @@ Kepler orbits and groups
   exactly. Kepler's equation is solved by safeguarded Newton iteration in a
   bracket of ±2 about the mean-anomaly change, which always holds the root.
 - `grpcomp(k,xc,vcm,tnow,nm,xm,um)` - positions and velocities now of the
-  stars of any group (binary, few-body group or frozen triple).
-- `fewadvance(k,...)` - brings a few-body group's own integration up to date,
-  merging stars inside it that collide.
+  stars of any group (binary, regularised group or frozen triple).
+- `toar(i,t8,tnow)`, `tokepler(i,tnow)` - a Kepler binary or frozen triple
+  becomes a regularised group; a regularised pair becomes a Kepler binary.
 - `pairorbit`, `pericentre` - binding energy and apocentre of a pair; its
   two-body pericentre.
 
 Collisions and mergers
 - `collision(i,j,...)` - the collision alert, and stop (when `mergers` is off).
-- `mergetype(t1,t2)` - the type of a merger product. **>>> CHANGE HERE** for
-  other rules.
-- `mergelog(...)` - the `** MERGER` alert and a line in `<runid>_mergers.dat`.
+- `groupmergetype(t1,t2)` - the type of a merger product. **>>> CHANGE HERE**
+  for other rules.
+- `groupmergelog(...)` - the `** MERGER` alert and a line in
+  `<runid>_mergers.dat` (both are used by `ar.c` too).
 - `mergestars(i,j,t8,tnow)` - merges two single stars.
 - `collcheck(t8,tnow)` - after each block, tests bodies that came close to
   another and merges them (or stops).
@@ -264,7 +300,8 @@ Collisions and mergers
 Neighbours and perturbations
 - `gperturb(...)` - the perturbation gamma on a (possible) group (from the
   tree when it is on and up to date).
-- `grpgamma(i,tnow)` - gamma of the group whose c.o.m. body is `i`.
+- `grpgamma(i,tnow,gcur,gorb)` - gamma of the group whose c.o.m. body is `i`,
+  with its current size and with its orbit's size (apocentre of a pair).
 - `nearestx(i,jex)` - the nearest body to `i`, not counting `jex`.
 
 Closing and opening
@@ -274,22 +311,22 @@ Closing and opening
 - `closegroup(nm,list,mode,t8,tnow)` - replaces stars by one c.o.m. body.
 - `opengroup(i,t8,tnow,nm,list)` - splits a c.o.m. body back into its stars,
   booking the energy change of a frozen triple in `efrozen`.
-- `pairstate(i,j)` - 1 if two single stars can be closed as a binary, else 0.
-  A pair whose pericentre is inside `rcoll` is never closed: it is merged by
-  `collcheck` when the stars meet.
-- `tryfreeze(k)` - freezes a few-body group of three if it is a stable
+- `pairstate(i,j)` - 1 if two single stars can be a Kepler binary, 2 if
+  they can be a regularised pair (bound, or unbound and coming together),
+  else 0. A pair whose pericentre is inside `rcoll` is never a Kepler binary.
+- `tryfreeze(k)` - freezes a regularised group of three if it is a stable
   triple, and records its energy then (`bein`).
-- `tryfew(nb,bod,t8,tnow)` - makes a few-body group if it would be isolated
-  and would pay. When it pays is explained above it; `NFEWFAC` is at the top
-  of the file.
-- `bincheck(t8,tnow)` - after each block: freezes, opens and closes groups
-  among the bodies that have just stepped.
-- `binstart(tnow)` - closes binaries and makes few-body groups in the
+- `tryfew(nb,bod,t8,tnow)` - makes a regularised group of 3 or more stars if
+  it would be isolated and would pay. When it pays is explained above it;
+  `NFEWFAC` is at the top of the file.
+- `bincheck(t8,tnow)` - after each block: changes, freezes, opens and closes
+  groups among the bodies that have just stepped.
+- `binstart(tnow)` - closes binaries and makes regularised groups in the
   initial conditions.
 
 Debugging (only with the environment variable `HENDOS_DEBUG` set)
 - `dbgenergy`, `dbgbefore`, `dbgafter` - print the change in total energy
-  across every close, open, freeze and few-body event. Each change should be
+  across every close, open, freeze and change of kind of a group. Each change should be
   about 1e-7 or smaller.
 
 ## restart.c - restart files

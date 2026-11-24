@@ -233,16 +233,16 @@
 
 
 !-----------------------------------------------------------------------
-!   BINARIES AND FEW-BODY ENCOUNTERS   -   no regularisation
+!   BINARIES AND FEW-BODY ENCOUNTERS   (see PARAMS_README.md)
 !-----------------------------------------------------------------------
-!   An unperturbed bound pair is treated as one body with an exact
-!   Kepler orbit, so it does not force tiny timesteps; it is split
-!   back into its two stars as soon as it is perturbed. Perturbation
-!   gamma = (tidal force across the orbit) / (binary's own force).
-!   A close encounter of 3 to 6 stars that is isolated from the rest
-!   of the cluster is likewise taken out and integrated on its own
-!   until it is over, and a stable hierarchical triple is treated as
-!   two Kepler orbits. All of these are invisible in the output
+!   A bound pair that is unperturbed all round its orbit is one body
+!   with an exact Kepler orbit (costs nothing). A perturbed binary, a
+!   close encounter of two stars, or a compact group of up to 6 stars
+!   is one body whose stars are integrated by algorithmic
+!   regularisation, feeling (and felt by) the stars around them
+!   (src/ar.c). A stable, unperturbed hierarchical triple is two
+!   Kepler orbits. Perturbation gamma = (tidal force across it) /
+!   (its own force). All of this is invisible in the output
 !   (snapshots have all N stars).
 !-----------------------------------------------------------------------
 &binaries
@@ -250,23 +250,24 @@
   closebinaries = .true.   ! [.true.]  use this treatment
 
   dtclose = 100.0          ! [100]   only stars with timesteps shorter
-                           !         than this (yr) are checked for
-                           !         being in an unperturbed binary
+                           !         than this (yr) are checked
 
-  gclose  = 1.0e-6         ! [1e-6]  treat as one body if gamma < gclose
-  gopen   = 1.0e-5         ! [1e-5]  split again if gamma > gopen
-                           !         (must be larger than gclose)
+  gclose  = 1.0e-6         ! [1e-6]  Kepler binary if gamma (at
+                           !         apocentre) < gclose
+  gopen   = 1.0e-5         ! [1e-5]  ... until gamma > gopen, when it is
+                           !         regularised (must be > gclose)
 
-  fewbody = .true.         ! [.true.]  integrate isolated few-body
-                           !         encounters on their own
+  fewbody = .true.         ! [.true.]  regularised groups (perturbed
+                           !         binaries, close encounters)
 
-  gfew    = 1.0e-5         ! [1e-5]  take a few-body group out if its
-                           !         gamma < gfew; it is put back when
-                           !         its gamma > 10 gfew
+  gfew    = 1.0e-2         ! [1e-2]  regularise if gamma (current size)
+                           !         < gfew; take in the nearest body,
+                           !         or split up, if gamma > 10 gfew
 
-  etafew  = 0.02           ! [0.02]  timestep accuracy parameter of the
-                           !         few-body integrator
+  artol   = 1.0e-10        ! [1e-10] accuracy of the regularised steps
 
+  gpert   = 1.0e-7         ! [1e-7]  bodies with their own gamma above
+                           !         this are its perturbers
 /
 
 

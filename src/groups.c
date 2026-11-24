@@ -1,50 +1,58 @@
 /* ==============================================================
  * HENDOS - HErmite N-body Dynamics Of Systems - groups.c
- * BINARIES, FEW-BODY GROUPS, COLLISIONS AND MERGERS (no regularisation)
+ * BINARIES, FEW-BODY GROUPS, COLLISIONS AND MERGERS
  *
- * GROUPS. A compact set of stars that is effectively unperturbed by the
- * rest of the cluster is replaced by a single centre-of-mass (c.o.m.)
- * body, and its internal motion is followed separately, in isolation.
- * The stars then no longer force tiny timesteps on the main
- * integration (where every step costs a prediction of all N bodies).
- * There are three kinds of group (bmode):
- *   1  binary          internal orbit is an exact Kepler orbit
- *   2  few-body group  3 to kfmax stars in a close encounter, integrated
- *                      by the small Hermite integrator in few.c
- *                      (compare the 'multiples' module of AMUSE). The
- *                      group and the cluster advance together in time:
- *                      the group is brought up to date whenever its
- *                      c.o.m. body steps and whenever output is written
- *   3  stable triple   a hierarchical triple that passes the Mardling &
- *                      Aarseth (2001) stability test is frozen as two
- *                      nested Kepler orbits (no secular evolution)
- * When a group becomes perturbed it is 'opened' back into its stars,
+ * GROUPS. A compact set of stars is replaced in the main integration by
+ * a single centre-of-mass (c.o.m.) body, and its internal motion is
+ * followed separately. The stars then no longer force tiny timesteps on
+ * the main integration (where every step costs a prediction of all N
+ * bodies). There are three kinds of group (bmode):
+ *   1  unperturbed binary   an exact Kepler orbit (costs nothing)
+ *   2  regularised group    2 to KFMAX stars - a perturbed binary, or a
+ *                           compact multiple in a close encounter -
+ *                           integrated by algorithmic regularisation
+ *                           with the tidal pull of its perturbers, and
+ *                           the perturbers feel its stars (ar.c)
+ *   3  frozen triple        a hierarchical triple that passes the
+ *                           Mardling & Aarseth (2001) stability test and
+ *                           is effectively unperturbed, as two nested
+ *                           Kepler orbits (no secular evolution)
+ * When a group becomes too perturbed it is 'opened' back into its stars,
  * which are then integrated directly like any other stars.
  *
- * relative perturbation of a group of mass mb and gsize s by all other
+ * relative perturbation of a group of mass mb and size s by all other
  * bodies k at distance d_k from its c.o.m.:
  *    gamma = 2 s^3 / mb * sum_k m_k / d_k^3
- * (tidal acceleration across the group / internal acceleration);
- * s is the apocentre of a binary, or the diameter of a larger group
+ * (tidal acceleration across the group / internal acceleration). Two
+ * sizes are used: g_orb, with s the apocentre of a bound pair (is it
+ * unperturbed ALL round its orbit? - for Kepler binaries), and g_cur,
+ * with s its current separation, or the diameter of a larger group (is
+ * it isolated NOW? - for regularised groups, as in KS regularisation).
  *
- * CLOSE   star i after its step if: its step < dtclose, its nearest
- *         neighbour j is a single star on the same block, the pair is
- *         bound, and gamma < gclose                       -> binary
- * FEW     if that pair is bound but perturbed, the pair and the next
- *         nearest body are tried as a group; so are a perturbed group
- *         and its nearest body. The group is formed if its own
- *         gamma < gfew, and if there are enough bodies in the main
- *         integration for it to pay (see tryfew)          -> few-body
- * FREEZE  a few-body group of three that is a stable hierarchy
- *                                                         -> triple
- * OPEN    a binary after one of its c.o.m. steps if gamma > gopen, any
- *         other group if gamma > 10 gfew (unless it can take its
- *         perturber in and still be isolated, see FEW)
+ * Star i, after its step, is a candidate if its step < dtclose and its
+ * nearest neighbour j is on the same block. Then:
+ * CLOSE   i, j single, bound, g_orb < gclose              -> 1 Kepler
+ *         i, j single, bound or coming together, g_cur < gfew
+ *                                                         -> 2 (a pair)
+ * FEW     otherwise the pair and the next nearest body are tried as a
+ *         group; so is a star and a nearby group. Made if its own
+ *         g_cur < gfew and it pays (see tryfew)            -> 2
+ * Groups, after each step of their c.o.m.:
+ *   1 Kepler:  g_orb > gopen      -> a regularised pair (2)
+ *   2 pair:    g_orb < gclose     -> Kepler (1), if bound
+ *   2 triple:  g_cur < gclose and a stable hierarchy -> frozen (3)
+ *   3 frozen:  g_cur > gopen      -> regularised (2)
+ *   any:       g_cur > 10 gfew    -> takes its nearest body in, if the
+ *                                    result is a group, or is opened
+ *   2 any:     its nearest body is a group perturbing it by more than
+ *              gfew on its own   -> takes it in, if the result is a group,
+ *                                   or else is opened
  * (gopen > gclose and the factor 10 give hysteresis, so groups do not
  * flicker.) Binaries in the initial conditions are closed at the start.
- * A star that leaves a few-body group makes the group large, so its
- * gamma rises and it is opened; what is left is closed again as a
- * binary if it is one.
+ * A star that leaves a group makes the group large, so its gamma rises
+ * and it is opened; what is left is closed again if it is a binary.
+ * With fewbody off there are no regularised groups: perturbed binaries
+ * are integrated directly, and only Kepler binaries are made.
  *
  * COLLISIONS AND MERGERS. Two stars that pass within rcoll of each
  * other have collided. With mergers on they are merged into one star
@@ -53,13 +61,15 @@
  * orbital energy of the pair is lost from the stellar dynamics: it is
  * added up in emerged so that the energy check still works. With
  * mergers off the run stops with an alert, as before. Collisions inside
- * few-body groups are treated in the same way.
+ * regularised groups are treated in the same way (ar.c).
  *
  * The bodies are kept contiguous in slots 0..n-1 of the particle arrays
  * (n = number of bodies, ntot = number of stars), so the force loops
  * are unchanged: closing puts the c.o.m. in the lowest slot and moves
  * the last bodies into the others; opening uses the c.o.m. slot and
  * slots n onwards. Only one open and one close are done per block.
+ * bcm[k] is the slot of group k's c.o.m., and the perturber lists of the
+ * regularised groups are kept pointing at the right slots (premap).
  *
  * All of this is done serially between blocks, outside any OpenMP
  * parallel region; the O(N) loops inside are parallelised. With the
@@ -76,7 +86,7 @@
 #include <omp.h>
 #include "hendos.h"
 
-#define NFEWFAC 2    /* a group of nm stars needs NFEWFAC*nm*(nm-1) bodies to pay */
+#define NFEWFAC 2    /* a multiple of nm stars needs NFEWFAC*nm*(nm-1) bodies to pay */
 
 static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list);
 static int bmode_last_open = 0;
@@ -112,7 +122,7 @@ double dbgenergy(double tnow)
             }
         }
     }
-    return ke + pe + emerged;
+    return ke + pe + emerged + arpotcorr(tnow, 1);
 }
 static double dbge1;
 static void dbgbefore(double tnow)
@@ -218,7 +228,7 @@ static double pericentre(double mb, const double rr[3], const double vr[3])
 
 /* type of the star made by merging types t1 and t2: the more compact
  * wins. >>> CHANGE HERE for different rules */
-static int mergetype(int t1, int t2)
+int groupmergetype(int t1, int t2)
 {
     if (t1 == TBHOLE || t2 == TBHOLE) return TBHOLE;
     if (t1 == TNSTAR || t2 == TNSTAR) return TNSTAR;
@@ -228,9 +238,9 @@ static int mergetype(int t1, int t2)
 }
 
 /* announce a merger on the screen and add a line to <runid>_mergers.dat */
-static void mergelog(double tnow, int id1, double m1, int t1, int id2, double m2, int t2,
-                     int idn, double mn, int tn, const double xn[3], const double vn[3],
-                     double rsep)
+void groupmergelog(double tnow, int id1, double m1, int t1, int id2, double m2, int t2,
+                   int idn, double mn, int tn, const double xn[3], const double vn[3],
+                   double rsep)
 {
     char fname[2 * NSTR];
     double rsun = 6.957e8 / 3.0856775814913673e16;
@@ -263,82 +273,11 @@ static void mergelog(double tnow, int id1, double m1, int t1, int id2, double m2
     fclose(f);
 }
 
-/* bring the integration of few-body group k up to internal time tnow
- * (xc, vcm: its c.o.m., only used to report a merger). Stars of the
- * group that collide on the way are merged inside it (or the run is
- * stopped if mergers are off). */
-static void fewadvance(int k, const double xc[3], const double vcm[3], double tnow)
-{
-    static int warned = 0;
-    double rc2 = rcoll > 0.0 ? rcolli * rcolli : 0.0;
-    for (;;) {
-        double trem = tnow - bepoch[k], tdone;
-        int nm = bnum[k], ic, jc;
-        int64_t nst;
-        if (trem <= 0.0 || nm < 2) break;
-        fewint(nm, bmass[k], bx[k], bv[k], trem, etafew, eps2, rc2, &tdone, &ic, &jc, &nst);
-        nfewsteps += nst;
-        if (ic == -1) {
-            bepoch[k] = tnow;
-            break;
-        }
-        bepoch[k] += tdone;
-        if (ic == -2) {
-            if (!warned)
-                printf("  ** NOTE t = %.4f Myr: a few-body group needs more than 2e7 steps "
-                       "in one go\n", tnow * tunit);
-            warned = 1;
-            continue;
-        }
-        /* stars ic and jc of the group have collided */
-        double m1 = bmass[k][ic], m2 = bmass[k][jc], mn = m1 + m2, rr[3], vr[3], xn[3], vn[3];
-        double xa[3], va[3];
-        for (int c = 0; c < 3; c++) {
-            rr[c] = bx[k][ic][c] - bx[k][jc][c];
-            vr[c] = bv[k][ic][c] - bv[k][jc][c];
-            xn[c] = (m1 * bx[k][ic][c] + m2 * bx[k][jc][c]) / mn;
-            vn[c] = (m1 * bv[k][ic][c] + m2 * bv[k][jc][c]) / mn;
-            xa[c] = xc[c] + xn[c];
-            va[c] = vcm[c] + vn[c];
-        }
-        double rsep = norm3(rr);
-        if (!mergers) {
-            printf("\n******************************************************************************\n");
-            printf("  STELLAR COLLISION at t = %.6f Myr (inside a few-body group)\n",
-                   bepoch[k] * tunit);
-            printf("  star ids %12d%12d   masses %12.5f%12.5f Msun\n", bident[k][ic],
-                   bident[k][jc], m1, m2);
-            printf("  The run has been stopped: mergers are switched off.\n");
-            printf("******************************************************************************\n");
-            exit(1);
-        }
-        emerged += 0.5 * m1 * m2 / mn * dot3(vr, vr) - m1 * m2 / sqrt(rsep * rsep + eps2);
-        int idn = m2 > m1 ? bident[k][jc] : bident[k][ic];
-        int tn = mergetype(btype[k][ic], btype[k][jc]);
-        mergelog(bepoch[k], bident[k][ic], m1, btype[k][ic], bident[k][jc], m2, btype[k][jc],
-                 idn, mn, tn, xa, va, rsep);
-        /* the merged star takes slot ic (ic < jc); the last star moves into jc */
-        bmass[k][ic] = mn;
-        bident[k][ic] = idn;
-        btype[k][ic] = tn;
-        memcpy(bx[k][ic], xn, sizeof(vec3));
-        memcpy(bv[k][ic], vn, sizeof(vec3));
-        if (jc != nm - 1) {
-            bmass[k][jc] = bmass[k][nm - 1];
-            bident[k][jc] = bident[k][nm - 1];
-            btype[k][jc] = btype[k][nm - 1];
-            memcpy(bx[k][jc], bx[k][nm - 1], sizeof(vec3));
-            memcpy(bv[k][jc], bv[k][nm - 1], sizeof(vec3));
-        }
-        bnum[k] = nm - 1;
-        ntot--;
-        nmerged++;
-    }
-}
-
 /* positions xm and velocities um of the nm stars of group k at internal
- * time tnow, given its c.o.m. position xc and velocity vcm. For a
- * few-body group this brings its own integration up to tnow. */
+ * time tnow, given its c.o.m. position xc and velocity vcm. A
+ * regularised group whose c.o.m. has just reached the end of its
+ * integration (tnow = bend) is first brought up to date (arshift: the
+ * ghosts of merged stars are removed). */
 void grpcomp(int k, const double xc[3], const double vcm[3], double tnow, int *nm,
              vec3 xm[KFMAX], vec3 um[KFMAX])
 {
@@ -369,12 +308,17 @@ void grpcomp(int k, const double xc[3], const double vcm[3], double tnow, int *n
             um[2][c] = vcm[c] + mb / mt * vo[c];
         }
     } else {
-        fewadvance(k, xc, vcm, tnow);
-        for (int l = 0; l < bnum[k]; l++)
+        double mm[KFMAX];
+        vec3 xr[KFMAX], ur[KFMAX];
+        if (fabs(tnow - bend[k]) <= 0.5 * tick) arshift(k);
+        int nr = arstate(k, tnow, mm, xr, ur);
+        for (int l = 0; l < nr; l++)
             for (int c = 0; c < 3; c++) {
-                xm[l][c] = xc[c] + bx[k][l][c];
-                um[l][c] = vcm[c] + bv[k][l][c];
+                xm[l][c] = xc[c] + xr[l][c];
+                um[l][c] = vcm[c] + ur[l][c];
             }
+        *nm = nr;
+        return;
     }
     *nm = bnum[k];
 }
@@ -485,6 +429,8 @@ static void moverow(int src, int dst)
     tpair2[dst] = tpair2[src];
     rmin2[dst] = rmin2[src];
     phi[dst] = phi[src];
+    if (ib[dst] >= 0) bcm[ib[dst]] = dst;
+    premap(src, dst);
     if (useac) acmoverow(src, dst);
 }
 
@@ -534,8 +480,8 @@ static void mergestars(int i, int j, int64_t t8, double tnow)
     double rsep = norm3(rr);
     emerged += 0.5 * mi * mj / mn * dot3(vr, vr) - mi * mj / sqrt(rsep * rsep + eps2);
     int idn = mj > mi ? id[j] : id[i];
-    int tn = mergetype(itype[i], itype[j]);
-    mergelog(tnow, id[i], mi, itype[i], id[j], mj, itype[j], idn, mn, tn, xc, vcm, rsep);
+    int tn = groupmergetype(itype[i], itype[j]);
+    groupmergelog(tnow, id[i], mi, itype[i], id[j], mj, itype[j], idn, mn, tn, xc, vcm, rsep);
 
     int lo = i < j ? i : j, hi = i < j ? j : i;
     for (int k = 0; k < 3; k++) {
@@ -548,6 +494,7 @@ static void mergestars(int i, int j, int64_t t8, double tnow)
     ib[lo] = -1;
     tk[lo] = t8;
     /* remove slot hi by moving the last body into it */
+    premap(hi, lo);
     if (useac) {
         acremoved(hi, lo);
         acok[lo] = 0;
@@ -629,12 +576,13 @@ static void tryfreeze(int k)
     memcpy(brel[k], rel, sizeof rel);
     memcpy(brel2[k], rel2, sizeof rel2);
     bmode[k] = 3;
+    arreset(k);
     nfrozen++;
 }
 
 /* replace the nm single stars in list (all at integer time t8 =
  * internal time tnow) by one c.o.m. body, as a group of kind mode
- * (1 binary, 2 few-body) */
+ * (1 Kepler binary, 2 regularised) */
 static void closegroup(int nm, const int *list, int mode, int64_t t8, double tnow)
 {
     int k = nbin++, lo = list[0];
@@ -700,6 +648,8 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
     id[lo] = 0;
     itype[lo] = 0;
     ib[lo] = k;
+    bcm[k] = lo;
+    npl[k] = 0;
     tk[lo] = t8;
     tpair2[lo] = tp2;
     double dtw = etap * sqrt(tp2), amod = norm3(f0[lo]), jmod = norm3(f1[lo]);
@@ -716,6 +666,7 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
             if (rest[l] > rest[lmax]) lmax = l;
         int h = rest[lmax];
         rest[lmax] = rest[--nrest];
+        premap(h, lo);
         if (useac) acremoved(h, lo);
         if (h != n - 1) {
             moverow(n - 1, h);
@@ -730,6 +681,8 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
         acok[lo] = 0;
         startbody(1, &lo, t8, 0);
     }
+    if (mode == 2) arstart(k, t8);
+    ardirty();
 }
 
 /* split the c.o.m. body i (at integer time t8 = internal time tnow)
@@ -769,6 +722,7 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
         list[l] = j;
     }
     if (useac) acok[i] = 0;
+    arreset(k);
     /* remove group k from the table, moving the last group into its place */
     int last = nbin - 1;
     if (k != last) {
@@ -783,11 +737,9 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
         bein[k] = bein[last];
         memcpy(bx[k], bx[last], sizeof bx[k]);
         memcpy(bv[k], bv[last], sizeof bv[k]);
-        for (int l = 0; l < n; l++)
-            if (ib[l] == last) {
-                ib[l] = k;
-                break;
-            }
+        bcm[k] = bcm[last];
+        ib[bcm[k]] = k;
+        armovegroup(last, k);
     }
     nbin--;
     if (mode == 1) nopened++; else nfewopened++;
@@ -797,10 +749,26 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
     startbody(*nm, list, t8, levc);
 }
 
-/* what single stars i and j are to each other: 0 nothing to do, 1 a
- * bound pair with gamma < gclose (can be closed as a binary). A bound
- * pair whose pericentre is inside rcoll is never closed: it is left in
- * the main integration, and collcheck merges the stars (or stops the
+/* what single stars i and j are to each other:
+ *   0  nothing to do
+ *   1  a bound pair that is unperturbed round its whole orbit: gamma with
+ *      its apocentre as the size < gclose -> a Kepler binary
+ *   2  a pair that is isolated now: gamma with its CURRENT SEPARATION as
+ *      the size < gfew, and either bound or coming together -> a
+ *      regularised pair (only with fewbody on)
+ * Judging a regularised pair by its current separation is what KS
+ * regularisation does (Aarseth 2003): a very eccentric binary whose
+ * apocentre reaches out among other stars is still regularised while it
+ * plunges through pericentre, and let go when it swings out again; an
+ * unbound pair is regularised for a close hyperbolic encounter. Either,
+ * integrated directly, can need steps shorter than the shortest level
+ * (kmax) and ruin the energy; regularised, any pericentre is easy. With
+ * the perturbers treated properly (ar.c) it does not matter that the
+ * pair is perturbed at its apocentre.
+ * A bound pair whose pericentre is inside rcoll is never closed as a
+ * Kepler binary, which would miss the collision: it is made a
+ * regularised pair, which watches for it, or with fewbody off it is left
+ * in the main integration, and collcheck merges the stars (or stops the
  * run) when they actually meet - not before. */
 static int pairstate(int i, int j)
 {
@@ -813,30 +781,40 @@ static int pairstate(int i, int j)
         vcm[k] = (m[i] * v[i][k] + m[j] * v[j][k]) / mb;
     }
     pairorbit(mb, rr, vr, &ebind, &rapo);
-    if (ebind >= 0.0) return 0;
-    /* the stars of this pair will collide: do not close it (see above) */
-    if (rcoll > 0.0 && pericentre(mb, rr, vr) < rcolli) return 0;
-    int two[2] = {i, j};
-    gperturb(xc, vcm, mb, rapo, 2, two, &gam, &tp2);
-    return gam < gclose ? 1 : 0;
+    double rn = norm3(rr);
+    int two[2] = {i, j}, bound = ebind < 0.0;
+    if (!bound && (!fewbody || dot3(rr, vr) >= 0.0)) return 0;
+    /* gamma scales as size^3, so one sum gives it for both sizes */
+    gperturb(xc, vcm, mb, rn, 2, two, &gam, &tp2);
+    if (bound) {
+        double gapo = gam * pow(rapo / rn, 3.0);
+        int collide = rcoll > 0.0 && pericentre(mb, rr, vr) < rcolli;
+        if (gapo < gclose && !collide) return 1;
+    }
+    if (fewbody && gam < gfew) return 2;
+    return 0;
 }
 
-/* perturbation gamma of the group whose c.o.m. body is i */
-static double grpgamma(int i, double tnow)
+/* perturbation of the group whose c.o.m. body is i (a regularised group
+ * is brought up to date first): gcur with its current size (separation
+ * of a pair, diameter of a larger group), gorb with the size of its
+ * orbit (apocentre of a bound pair; otherwise the same as gcur) */
+static void grpgamma(int i, double tnow, double *gcur, double *gorb, double *gs)
 {
     int k = ib[i], nm;
     vec3 xm[KFMAX], um[KFMAX];
-    double gsize = 0.0, ebind, gam, tp2, xc[3], vcm[3];
+    double gsize = 0.0, ebind, rapo = 0.0, tp2, xc[3], vcm[3];
     memcpy(xc, r[i], sizeof xc);
     memcpy(vcm, v[i], sizeof vcm);
     grpcomp(k, xc, vcm, tnow, &nm, xm, um);
-    if (bmode[k] == 1) {
+    if (nm == 2) {
         double rr[3], vr[3];
         for (int c = 0; c < 3; c++) {
             rr[c] = xm[0][c] - xm[1][c];
             vr[c] = um[0][c] - um[1][c];
         }
-        pairorbit(m[i], rr, vr, &ebind, &gsize);
+        pairorbit(m[i], rr, vr, &ebind, &rapo);
+        gsize = norm3(rr);
     } else {
         for (int l = 0; l < nm; l++) {
             double d[3];
@@ -844,43 +822,72 @@ static double grpgamma(int i, double tnow)
             gsize = fmax(gsize, 2.0 * norm3(d));
         }
     }
-    gperturb(xc, vcm, m[i], gsize, 1, &i, &gam, &tp2);
-    return gam;
+    gperturb(xc, vcm, m[i], gsize, 1, &i, gcur, &tp2);
+    *gs = gsize;
+    *gorb = *gcur;
+    if (nm == 2) *gorb = rapo == HUGE_VAL ? HUGE_VAL : *gcur * pow(rapo / gsize, 3.0);
 }
 
-/* try to make a few-body group out of the nb bodies in bod (single
+/* group k, c.o.m. in slot i, at internal time tnow: a Kepler binary or a
+ * frozen triple becomes a regularised group (no slots change) */
+static void toar(int i, int64_t t8, double tnow)
+{
+    int k = ib[i], nm;
+    vec3 xm[KFMAX], um[KFMAX];
+    grpcomp(k, r[i], v[i], tnow, &nm, xm, um);
+    if (bmode[k] == 3) efrozen += bein[k] - grpeint(nm, bmass[k], xm, um);
+    for (int l = 0; l < nm; l++)
+        for (int c = 0; c < 3; c++) {
+            bx[k][l][c] = xm[l][c] - r[i][c];
+            bv[k][l][c] = um[l][c] - v[i][c];
+        }
+    bmode[k] = 2;
+    nfewformed++;
+    arstart(k, t8);
+}
+
+/* a regularised pair (c.o.m. in slot i, up to date at tnow) has become
+ * unperturbed: it becomes a Kepler binary */
+static void tokepler(int i, double tnow)
+{
+    int k = ib[i];
+    for (int c = 0; c < 3; c++) {
+        brel[k][c] = bx[k][0][c] - bx[k][1][c];
+        brel[k][c + 3] = bv[k][0][c] - bv[k][1][c];
+    }
+    bepoch[k] = tnow;
+    bmode[k] = 1;
+    arreset(k);
+    nclosed++;
+}
+
+/* try to make a regularised group out of the nb bodies in bod (single
  * stars or groups, all at integer time t8). It is made if it has 3 to
  * KFMAX stars, its perturbation by the rest of the cluster is below
  * gfew, and it would pay: the main integration must have at least
- * NFEWFAC*nm*(nm-1) bodies (see below for why), unless
- * it is a stable triple, which costs nothing once frozen. Returns 1 if
- * the group was made.
+ * NFEWFAC*nm*(nm-1) bodies (see below for why), unless it is an
+ * unperturbed stable triple, which costs nothing once frozen. Returns 1
+ * if the group was made. (Pairs are made in bincheck and binstart.)
  *
  * WHEN A GROUP PAYS. Taking nm stars out saves work only if the main
  * integration is big enough. There, each step of a close pair costs
  * about 2.5 n pair interactions (two force sums over the n bodies and
- * the prediction of all of them). In the few-body integrator a step
- * costs about 1.3 nm (nm-1) (two evaluations of every pair), and it
- * takes 2 to 4 times as many steps per orbit as the main integrator
- * (measured on binaries with eccentricity 0.9 to 0, at the standard
- * eta and etafew; it is also about 1000 times more accurate per orbit).
- * The costs are equal when
- *      n = (1.1 to 2.3) nm (nm-1)
- * so a group is only made if n >= NFEWFAC nm (nm-1), NFEWFAC = 2:
+ * the prediction of all of them). The rule n >= NFEWFAC nm (nm-1),
+ * NFEWFAC = 2,
  *      stars in the group        3     4     5     6
  *      bodies needed            12    24    40    60
- * The break-even depends on the size of the group, not on a fixed
- * number of stars, and it is far below that of the neighbour scheme
- * (150), because the saving per step is n/nm^2, not n/neighbours.
- * Accuracy does not depend on n at all: it is set by gfew and etafew.
- * A stable triple is always worth it, whatever n is, because frozen as
- * Kepler orbits it costs nothing: so three stars that are a stable
- * hierarchy are taken out even if n is below the number above.
+ * was measured for the old Hermite few-body integrator, which took 2 to 4
+ * times as many steps per orbit as the main integrator. The regularised
+ * integrator takes 10 to 20 steps per orbit whatever the eccentricity,
+ * each of about 40 force evaluations of nm(nm-1)/2 pairs plus nm times
+ * the number of perturbers, so the rule is still about right (if
+ * anything a little cautious). Accuracy does not depend on n at all: it
+ * is set by gfew and artol. An unperturbed stable triple is always worth
+ * it, whatever n is, because frozen as Kepler orbits it costs nothing.
  *
  * >>> CHANGE HERE (NFEWFAC, at the top of this file) once the break-even has
  *     been measured with the compiled code: benchmark/bench_kira.py
  *     --skip-kira --modes nofew direct
- *
  */
 static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
 {
@@ -926,7 +933,7 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
     if (n < NFEWFAC * nm * (nm - 1)) {
         int stable, i1, i2, i3;
         double rel[6], rel2[6], qin, qout;
-        if (nm != 3) return 0;
+        if (nm != 3 || gam >= gclose) return 0;
         hierarchy(mm, xm, um, &stable, &i1, &i2, &i3, rel, rel2, &qin, &qout);
         if (!stable) return 0;
         if (rcoll > 0.0 && qin < rcolli) return 0;
@@ -944,19 +951,22 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
     }
     if (nl < 3) return 0;
     closegroup(nl, list, 2, t8, tnow);
-    /* a stable triple is frozen at once (the new group is the last one) */
-    if (nl == 3) tryfreeze(nbin - 1);
+    /* an unperturbed stable triple is frozen at once (the new group is the
+     * last one) */
+    if (nl == 3 && gam < gclose) tryfreeze(nbin - 1);
     return 1;
 }
 
 /* after each block (all active bodies at integer time t8 = internal
  * time tnow), among the bodies that have just stepped:
- *  - groups: freeze a few-body group that has become a stable triple;
- *    open one group that has become perturbed (or take its perturber
- *    into a few-body group, if that would be isolated)
- *  - single stars with short steps: close one unperturbed pair, merge
- *    a pair about to collide, or make a few-body group of a perturbed
- *    pair and the next nearest body */
+ *  - groups: change the kind of one that has become more or less
+ *    perturbed (Kepler <-> regularised, frozen <-> regularised); open one
+ *    that has become too perturbed (or take its perturber into a
+ *    regularised group, if that would be isolated)
+ *  - single stars with short steps: close one bound pair (Kepler or
+ *    regularised), or make a regularised group of a perturbed pair and
+ *    the next nearest body
+ * (see the top of this file) */
 void bincheck(int64_t t8, double tnow)
 {
     int nact0 = nact, nm, list[KFMAX];
@@ -966,24 +976,16 @@ void bincheck(int64_t t8, double tnow)
     for (int ia = 0; ia < nact0; ia++) {
         int i = alist[ia];
         if (i >= n || ib[i] < 0 || tk[i] != t8) continue;
-        double gam = grpgamma(i, tnow);
-        int k = ib[i];
-        double gmax = (bmode[k] == 1) ? gopen : 10.0 * gfew;
-        if (bmode[k] == 2) {
-            if (bnum[k] < 3) {                     /* mergers have left fewer than three */
-                dbgbefore(tnow);
-                opengroup(i, t8, tnow, &nm, list);
-                dbgafter("open<3", tnow);
-                break;
-            }
-            if (bnum[k] == 3 && gam <= gmax) {
-                dbgbefore(tnow);
-                int64_t nf0 = nfrozen;
-                tryfreeze(k);
-                if (nfrozen > nf0) dbgafter("freeze", tnow);
-            }
+        double gam, gorb, gs;
+        grpgamma(i, tnow, &gam, &gorb, &gs);
+        int k = ib[i], mode = bmode[k];
+        if (mode == 2 && bnum[k] < 2) {          /* mergers have left a single star */
+            dbgbefore(tnow);
+            opengroup(i, t8, tnow, &nm, list);
+            dbgafter("open<2", tnow);
+            break;
         }
-        if (gam > gmax) {
+        if (gam > 10.0 * gfew || (!fewbody && gorb > gopen)) {
             int done = 0;
             if (fewbody) {
                 int j = nearestx(i, -1);
@@ -1000,6 +1002,58 @@ void bincheck(int64_t t8, double tnow)
                 dbgafter(bmode_last_open == 1 ? "open-bin" : "open-grp", tnow);
             }
             break;
+        }
+        /* two groups meeting: each sees the other as a point mass, so the
+         * interaction of their internal motions (quadrupole with quadrupole)
+         * is left out. So a group whose nearest body is another group takes
+         * it in as soon as that group alone perturbs it by more than gfew,
+         * if the two together are isolated - not only when its whole
+         * gamma passes 10 gfew - and if they are not, it is opened. (Found
+         * in cold fractals: two regularised binaries that met as point
+         * masses until gamma = 0.1 put errors of 2e-4 to 5e-4 into the
+         * energy.) Its stars cannot be made a group again while the other
+         * group is that close, because its gamma alone is then above gfew. */
+        if (fewbody && mode == 2) {
+            int j = nearestx(i, -1);
+            if (j >= 0 && ib[j] >= 0 && tk[j] == t8) {
+                double d[3] = {r[j][0] - r[i][0], r[j][1] - r[i][1], r[j][2] - r[i][2]};
+                double dn = norm3(d), gj = 2.0 * gs * gs * gs * m[j] / (m[i] * dn * dn * dn);
+                if (gj > gfew) {
+                    int two[2] = {i, j};
+                    dbgbefore(tnow);
+                    if (tryfew(2, two, t8, tnow)) {
+                        dbgafter("few(g+g)", tnow);
+                        break;
+                    }
+                    /* they cannot be one group: this one is opened, so that
+                     * the other sees its stars, exactly, as single stars */
+                    dbgbefore(tnow);
+                    opengroup(i, t8, tnow, &nm, list);
+                    dbgafter("open-gg", tnow);
+                    break;
+                }
+            }
+        }
+        /* changes of kind: no slots change, so several may be done */
+        if ((mode == 1 && gorb > gopen) || (mode == 3 && gam > gopen)) {
+            dbgbefore(tnow);
+            toar(i, t8, tnow);
+            dbgafter(mode == 1 ? "kep->AR" : "unfreeze", tnow);
+        } else if (mode == 2 && gorb < gclose) {
+            double vr[3] = {bv[k][0][0] - bv[k][1][0], bv[k][0][1] - bv[k][1][1],
+                            bv[k][0][2] - bv[k][1][2]};
+            double rr[3] = {bx[k][0][0] - bx[k][1][0], bx[k][0][1] - bx[k][1][1],
+                            bx[k][0][2] - bx[k][1][2]};
+            if (bnum[k] == 2 && 0.5 * dot3(vr, vr) < m[i] / norm3(rr)) {
+                dbgbefore(tnow);
+                tokepler(i, tnow);
+                dbgafter("AR->kep", tnow);
+            } else if (bnum[k] == 3) {
+                dbgbefore(tnow);
+                int64_t nf0 = nfrozen;
+                tryfreeze(k);
+                if (nfrozen > nf0) dbgafter("freeze", tnow);
+            }
         }
     }
 
@@ -1019,10 +1073,10 @@ void bincheck(int64_t t8, double tnow)
             }
         } else {
             int st = pairstate(i, j);
-            if (st == 1) {
+            if (st > 0) {
                 dbgbefore(tnow);
-                closegroup(2, two, 1, t8, tnow);
-                dbgafter("close", tnow);
+                closegroup(2, two, st, t8, tnow);
+                dbgafter(st == 1 ? "close" : "close-AR", tnow);
                 done = 1;
             } else if (fewbody) {
                 int l = nearestx(i, j);
@@ -1040,10 +1094,10 @@ void bincheck(int64_t t8, double tnow)
 }
 
 /* at the start (everyone at integer time 0 = internal time tnow):
- * close all unperturbed binaries in the initial conditions, merge
- * pairs that would collide, and make few-body groups of perturbed
- * bound pairs with their nearest body where those are isolated. After
- * a change slot i may hold a different body, so i only advances when
+ * close all bound pairs in the initial conditions (Kepler or
+ * regularised), and make regularised groups of perturbed bound pairs
+ * with their nearest body where those are isolated enough. After a
+ * change slot i may hold a different body, so i only advances when
  * nothing was done. */
 void binstart(double tnow)
 {
@@ -1054,8 +1108,8 @@ void binstart(double tnow)
             int j = nearestx(i, -1);
             if (j >= 0 && ib[j] < 0) {
                 int two[2] = {i, j}, st = pairstate(i, j);
-                if (st == 1) {
-                    closegroup(2, two, 1, 0, tnow);
+                if (st > 0) {
+                    closegroup(2, two, st, 0, tnow);
                     done = 1;
                 } else if (fewbody) {
                     /* only bound pairs: a perturbed binary and its perturber */

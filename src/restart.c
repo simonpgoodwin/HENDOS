@@ -81,7 +81,7 @@ void writerestart(double time, int iout, int64_t nblock, int64_t nforce)
 
     secbegin(f, "COUNTERS");
     WR1(f, nclamp); WR1(f, nclosed); WR1(f, nopened); WR1(f, nfewformed); WR1(f, nfewopened);
-    WR1(f, nfrozen); WR1(f, nfewsteps); WR1(f, nmerged); WR1(f, emerged); WR1(f, nregular);
+    WR1(f, nfrozen); WR1(f, narsteps); WR1(f, nmerged); WR1(f, emerged); WR1(f, nregular);
     WR1(f, nirregular);
     secend(f);
 
@@ -182,7 +182,7 @@ void readrestart(double *time, int *iout, int64_t *nblock, int64_t *nforce)
             RD(comshift, 3); RD(covshift, 3); rd(icformat, 1, sizeof icformat);
         } else if (!strcmp(tag, "COUNTERS")) {
             RD1(nclamp); RD1(nclosed); RD1(nopened); RD1(nfewformed); RD1(nfewopened);
-            RD1(nfrozen); RD1(nfewsteps); RD1(nmerged); RD1(emerged); RD1(nregular);
+            RD1(nfrozen); RD1(narsteps); RD1(nmerged); RD1(emerged); RD1(nregular);
             RD1(nirregular);
         } else if (!strcmp(tag, "ENERGY")) {
             RD1(etot0); RD1(eprev); RD1(demax); RD1(nmergedsnap);
@@ -214,6 +214,16 @@ void readrestart(double *time, int *iout, int64_t *nblock, int64_t *nforce)
     fclose(rf);
     if (!gotpart || (useac && !gotac)) die("the restart file is incomplete");
 
+    /* the groups: where their c.o.m. bodies are; regularised groups start
+     * again from their state at the time of the file (their perturber
+     * lists are made afresh at the first block, as in an unbroken run) */
+    for (int i = 0; i < n; i++)
+        if (ib[i] >= 0) bcm[ib[i]] = i;
+    for (int k = 0; k < nbin; k++) {
+        arreset(k);
+        bend[k] = bepoch[k];
+        bend8[k] = 0;
+    }
     /* everyone is synchronised at the time of the file, integer clock zero */
     for (int i = 0; i < n; i++) {
         memcpy(rp[i], r[i], sizeof(vec3));

@@ -208,12 +208,12 @@ difference between stars rose with separation to the power 0.50 for `larson`,
 - Then one line per star, in id order: `id m x y z vx vy vz type phi dt`
   (type = particle type name, phi = gravitational + tidal potential per unit
   mass, dt = current timestep).
-- All N stars always appear individually (binaries and few-body groups are
+- All N stars always appear individually (binaries and regularised groups are
   invisible in output). After a merger there is one star fewer.
 - **The header is meant to grow.** The rules that keep old and new files
   readable by the same programs: readers look keys up by name and ignore keys
   they do not know; a key that is missing means that physics was off; the key
-  `physics` lists what was on (e.g. `gravity tide binaries few_body mergers`);
+  `physics` lists what was on (e.g. `gravity tide binaries few_body regularised mergers`);
   and columns are found by name from the `columns` key, with new columns added
   after the existing ones. The lines that depend on the physics are written by
   `hdrphysics` in `src/io.c`, one block per piece of physics, each written
@@ -259,27 +259,39 @@ sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
 - **Galactic tide** (`&tides`): Hill's approximation in the rotating frame,
   'none', 'solar' (Oort A, B: Bovy 2017; rho0: McKee et al. 2015) or a user tensor.
   Energies are Jacobi energies. Full description: `docs/tidal.tex`.
-- **Binaries** (`&binaries`, no regularisation): an unperturbed bound pair
-  (gamma = 2 r_apo^3 sum m_k/d_k^3 / m_b < `gclose`) is replaced by one body with
-  an exact Kepler orbit; opened again when gamma > `gopen`. Binaries in the
-  initial conditions are closed at the start. Candidates: stars with steps <
-  `dtclose`. Requires eps = 0.
-- **Few-body encounters** (`fewbody` in `&binaries`; after the `multiples`
-  module of AMUSE): a close group of 3 to 6 stars - a binary meeting a star or
-  another binary, or a perturbed pair and its perturber - whose perturbation by
-  the rest of the cluster is below `gfew` is replaced by one centre-of-mass body
-  and integrated on its own by a small shared-timestep Hermite integrator
-  (`src/few.c`). The group and the cluster advance together in time. It is
-  opened again when gamma > 10 `gfew`, which is what happens when a star is
-  ejected. A group of three that passes the Mardling & Aarseth (2001) stability
-  test is frozen as two nested Kepler orbits (no secular evolution, so no
-  Kozai-Lidov cycles). A group of k stars is only taken out if the main
-  integration has at least 2 k (k-1) bodies (12, 24, 40, 60 for k = 3 to 6),
-  below which it would not pay; a stable triple is taken out whatever N is.
+- **Binaries** (`&binaries`): a bound pair that is unperturbed all round its
+  orbit (gamma = 2 r_apo^3 sum m_k/d_k^3 / m_b < `gclose`) is replaced by one
+  body with an exact Kepler orbit. When gamma > `gopen` it becomes a
+  regularised pair (below). Binaries in the initial conditions are closed at
+  the start. Candidates: stars with steps < `dtclose`. Requires eps = 0.
+- **Regularised groups** (`fewbody` in `&binaries`, `src/ar.c`): a perturbed
+  binary, a close two-body encounter (bound or not), or a compact group of up
+  to 6 stars - a binary meeting a star or another binary - whose perturbation
+  at its current size is below `gfew` is replaced by one centre-of-mass body,
+  and its stars are integrated by algorithmic regularisation: the
+  logarithmic-Hamiltonian leapfrog (Mikkola & Tanikawa 1999) with
+  Gragg-Bulirsch-Stoer extrapolation, accurate to `artol` per step and regular
+  at any pericentre. The stars feel the tidal pull of their perturbers (bodies
+  with their own gamma > `gpert`), predicted from their Taylor series, and the
+  perturbers and the centre of mass feel the resolved stars rather than a
+  point mass, so the whole system has one Hamiltonian and the energy check
+  includes the difference. A group is integrated ahead, at the start of a
+  block, to the end of the step of its centre of mass or of its strongest
+  perturber, whichever comes first, and found at times in between by
+  interpolation. A star passing close by takes steps set by its distance to
+  the group's stars, not just its centre of mass. When gamma > 10 `gfew` the
+  group takes its nearest body in, or is split up (what happens when a star
+  is ejected); a neighbouring group is taken in as soon as it alone perturbs
+  the group by more than `gfew`, or if that is not possible the group is split
+  up, because two groups see each other only as point masses. A group of three that is a
+  stable hierarchy (Mardling & Aarseth 2001) and unperturbed (gamma <
+  `gclose`) is frozen as two nested Kepler orbits (no secular evolution). A
+  group of k >= 3 stars is only made if the main integration has at least
+  2 k (k-1) bodies (12, 24, 40, 60 for k = 3 to 6).
 - **Stellar collisions and mergers** (`&collisions`): two stars that pass
   within `rcoll` (default 10 Rsun) have collided - checked from the
   closest-approach distance in the force loop plus the two-body pericentre, and
-  inside few-body groups. With `mergers` on (the default) they are merged: total
+  inside regularised groups. With `mergers` on (the default) they are merged: total
   mass at the centre of mass, id of the more massive, type of the more compact,
   no mass loss. Each merger is announced on the screen (`** MERGER`), written to
   `<runid>_mergers.dat` and counted in the snapshot headers; the orbital energy
@@ -325,9 +337,13 @@ with `OMP_NUM_THREADS` and printed at the start of a run.
 - **Other**: starting timesteps, energies and potentials, and the O(N) sums in
   the binary routines (perturbation, nearest neighbour).
 
+- **Regularised groups**: the groups that need integrating at the start of a
+  block are integrated at the same time, one per thread; their corrections to
+  the active bodies' forces are shared out like the forces.
+
 Still serial, because they are cheap or rare: making the list of active
-particles, the binary and collision bookkeeping between blocks, the few-body
-integrator (a handful of stars), output and the in-run analysis.
+particles, the binary and collision bookkeeping between blocks, output and
+the in-run analysis.
 
 ## The archived Fortran version
 HENDOS was first written in Fortran, and that version is kept in
@@ -339,7 +355,8 @@ the code was translated to C, and fixed in both.
 
 ## Debugging aids
 - `HENDOS_DEBUG=1 ./hermite params.nml` prints the change in total energy
-  across every binary or few-body event: close, open, freeze, a group formed.
+  across every binary or group event: close, open, freeze, a group formed, a
+  Kepler binary regularised or a regularised pair made Kepler.
   Each change should be about 1e-7 or smaller, so a big one points straight
   at the event that is wrong.
 - `HENDOS_TRACE="t1 t2" ./hermite params.nml` (times in Myr) prints every block
@@ -348,41 +365,49 @@ the code was translated to C, and fixed in both.
   the window short.
 
 ## Testing
-`tests/run_tests.py` runs `hermite` on 20 small problems with known answers
+`tests/run_tests.py` runs `hermite` on 25 small problems with known answers
 (two-body orbits, the Pythagorean problem, a frozen triple, a Plummer sphere
 by direct sums, with the neighbour scheme, the tree and a tide, the tree with
 binaries, with one and two threads and through a restart, a merger, restarts,
-ensembles, header flexibility) and checks each against a tolerance. Run it
-after every change. See `tests/README.md`.
+ensembles, header flexibility, and for the regularised groups a flyby
+against a very accurate direct run, a regularised triple, an e = 0.9999
+binary plunging past a third star, a hyperbolic near miss and a restart) and
+checks each against a tolerance. Run it after every change. See
+`tests/README.md`.
 
 ## Status
-The N-body code (C) has been compiled with gcc 13 and run. It passes all 20
+The N-body code (C) has been compiled with gcc 13 and run. It passes all 25
 regression tests, also with gcc's address and
 undefined-behaviour checks on, and it has been run on clusters with many
 primordial binaries. The algorithms were also checked with Python models as
 they were written (Hermite with block steps, the tide, binaries, the
-neighbour scheme, the few-body integrator). The regression-test limits were
-first set from those models, and some have since been set from the C runs.
-Two things have not been done yet: the break-even values of the neighbour
-scheme (150 stars) and of few-body groups (`NFEWFAC`) have not been measured
-on real timings, and there has been no comparison with kira.
+neighbour scheme, the old few-body integrator); the regularised groups were
+checked in C against very accurate direct integrations. The regression-test
+limits were first set from those models, and some have since been set from
+the C runs.
+The break-even values of the neighbour scheme (150 stars) and of
+regularised groups (`NFEWFAC`) have not yet been measured on real timings.
+HENDOS has been compared with kira (`benchmark/`).
 The initial conditions generator (Fortran) and the archived Fortran N-body
 code have not been compiled here, because there is no Fortran compiler in
 this environment.
 
 Known limits of the new parts:
-- few-body groups are integrated without the cluster's tidal pull on them
-  (that is what `gfew` bounds), and with a shared, not time-symmetric step, so
-  a group that lives for very many orbits without freezing or opening slowly
-  drifts in energy (about 3e-9 of its binding energy per orbit at
-  `etafew` = 0.02);
-- only triples are frozen; stable quadruples (2+2, 3+1) stay integrated;
+- only triples are frozen; stable quadruples (2+2, 3+1) stay regularised;
 - frozen triples have no secular evolution; the small change in a triple's
-  energy while it is frozen is booked in `energy_change_frozen_triples`;
-- there is no regularisation: perturbed hard binaries are integrated directly
-  in the main code. That is why the standard `eta` is 0.01: in clusters rich in
-  hard binaries `eta` = 0.02 gave energy errors of 1e-2 or worse, while 0.01
-  gave about 1e-4 in the same tests;
+  energy while it is frozen is booked in `energy_change_frozen_triples`. A
+  long-lived, weakly perturbed hierarchy that is not frozen is integrated
+  orbit by orbit, which is accurate but can be slow: the next step would be
+  'slow-down' (Mikkola & Aarseth 1996), which follows such a system by its
+  orbit-averaged motion, Kozai cycles and all;
+- perturbations of a Kepler binary below `gopen` are ignored, which sets the
+  accuracy of binaries that pass in and out of that range (about 1e-5 of the
+  binary's energy in a flyby; the regularised treatment alone gets 1e-10);
+- a regularised group sees another group nearby as a point mass, until
+  the other's own perturbation passes `gfew` and the two are merged or one
+  is split up;
+- perturber lists are found by an O(N) search, which with the tree at large N
+  will cost more than the tree force for groups that step often;
 - mergers conserve mass and momentum, with no mass loss, kick or change of
   radius - stellar evolution will supply those;
 - in the neighbour scheme the predictor's higher-order terms are not corrected

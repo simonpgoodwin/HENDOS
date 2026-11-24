@@ -369,76 +369,114 @@ value takes more steps without making the tree forces any more accurate.
 
 ## Standard settings - these should rarely need changing
 
-## `&binaries` - unperturbed binaries and few-body encounters
-There is no regularisation. Instead a bound pair that nothing else is
-disturbing is replaced by a single body at its centre of mass, and its orbit is
-followed exactly as a Kepler orbit. This stops a tight binary forcing tiny
-timesteps. As soon as the pair is disturbed it is put back as two stars and
-integrated normally. How disturbed a binary is is measured by gamma: the tidal
-force of all other particles across the binary's orbit, divided by the
-binary's own internal force. Binaries never appear as single bodies in the
-output.
+## `&binaries` - binaries and few-body encounters
+Close pairs and small groups of stars are taken out of the main calculation
+and replaced by a single body at their centre of mass, so that they do not
+force tiny timesteps on it (where every step costs a prediction of every star
+in the cluster). There are three kinds:
+
+- **Kepler binaries.** A bound pair that nothing else is disturbing *all the
+  way round its orbit* is followed exactly as a Kepler orbit. It costs
+  nothing, however hard it is.
+- **Regularised groups.** A perturbed binary, a close encounter of two stars
+  (bound or not), or a compact group of up to 6 stars, is integrated on its
+  own by *algorithmic regularisation* (the time-transformed leapfrog of
+  Mikkola & Tanikawa 1999 with Gragg-Bulirsch-Stoer extrapolation, as in
+  AR-CHAIN). It is regular - a pericentre of a millionth of the semi-major
+  axis costs no more than a circular orbit - and very accurate (an error of
+  about 1e-10 per step, with 10 to 20 steps per orbit). The stars feel the
+  tidal pull of the nearby stars (the *perturbers*), and the perturbers feel
+  the group's stars, not just a point mass, so energy and momentum are
+  exchanged properly. See `src/ar.c` for how.
+- **Frozen triples.** A stable hierarchical triple (an inner binary and a
+  distant third star, by the Mardling & Aarseth 2001 criterion) that is
+  unperturbed is treated as two exact Kepler orbits. Being frozen, it has no
+  secular evolution (no Kozai cycles), so only truly isolated ones are frozen.
+
+How disturbed a pair or group is, is measured by gamma: the tidal force of all
+the other bodies across it, divided by its own internal force. Two versions
+are used. For a Kepler binary, gamma is measured with the binary's apocentre
+as its size (is it unperturbed *all round its orbit?*). For a regularised group
+it is measured with its *current* size, its separation or diameter (is it
+isolated *now?*), as KS regularisation does. So a very eccentric binary whose
+apocentre reaches out among other stars is regularised while it plunges
+through pericentre and let go when it swings out again.
+
+None of this shows in the output: snapshots always have all N stars.
 
 ### `closebinaries` (switch, standard value `.true.`)
-Switches this treatment on. It is switched off automatically, with a warning,
-if `eps` is greater than 0.
+Switches all of this on. It is switched off automatically, with a warning, if
+`eps` is greater than 0.
 
 ### `dtclose` (yr, standard value 100.0)
 Only stars whose timestep is shorter than this are tested to see if they are
-in an unperturbed binary. It simply saves testing stars that cannot be in a
-tight binary. Binaries already in the initial conditions are all tested at the
-start whatever their timesteps.
+in a binary or a close encounter. It simply saves testing stars that cannot
+be. Binaries already in the initial conditions are all tested at the start,
+whatever their timesteps.
 
 ### `gclose` (standard value 1.0e-6)
-A bound pair is treated as one body when its gamma is below this.
+A bound pair becomes a Kepler binary when its gamma (at apocentre) is below
+this. A regularised pair becomes a Kepler binary in the same way, and a
+regularised group of three that is a stable hierarchy is frozen when its
+gamma is below this.
 
 ### `gopen` (standard value 1.0e-5)
-A binary being treated as one body is split back into two stars when its gamma
-rises above this. It must be larger than `gclose`; the gap between them stops
-a binary being closed and opened over and over.
+A Kepler binary, or a frozen triple, whose gamma rises above this becomes a
+regularised group (or, with `fewbody` off, is split back into its stars). It
+must be larger than `gclose`; the gap stops a binary being changed back and
+forth.
 
 ### `fewbody` (switch, standard value `.true.`)
-`.true.` treats close encounters of a few stars separately. When a binary
-meets another star or binary, or three stars come together, and the group of
-them (3 to 6 stars) is isolated from the rest of the cluster, the group is
-taken out of the main calculation and replaced by a single body at its centre
-of mass. Its internal motion is integrated on its own, at the same time as the
-cluster, until the encounter is over: when a star is thrown out the group
-grows, stops being isolated, and its stars are put back. This is much faster
-than leaving them in, because each of the very short steps of a close
-encounter otherwise costs a prediction of every star in the cluster. A group
-of three that settles into a stable hierarchical triple (an inner binary and
-a distant third star, by the Mardling & Aarseth 2001 criterion) is then
-treated as two exact Kepler orbits. It needs `closebinaries` to be on.
+`.true.` uses regularised groups. With `.false.` only Kepler binaries are
+made, and everything perturbed is integrated directly in the main
+calculation - as HENDOS did before regularisation, and much slower and
+less accurate in clusters rich in binaries: on a Plummer sphere of 500
+binaries (a = 10 to 1000 AU) the old code took 385 s per Myr with an energy
+error of 2e-6, the new one 13 s with 3e-7; on cold fractals the old code's
+energy errors were 20 to 300 (meaningless) and the new one's 1e-4. It needs
+`closebinaries` to be on.
 
-A group is only taken out when that saves work, which depends on how many
-bodies the main calculation has compared with the size of the group: 12 for a
-group of three, 24 for four, 40 for five, 60 for six (twice the number of
-stars in the group times one less than that). Below those numbers the stars
-are simply left in the main calculation. The numbers are estimates: a step of
-a close pair in the main calculation costs about 2.5 N pair interactions and a
-step of a group of k stars about 1.3 k (k-1), and the group integrator takes 2
-to 4 times as many steps per orbit (it is also about 1000 times more accurate
-per orbit), so the two cost the same at N between 1.1 and 2.3 times k (k-1).
-There is no fixed N below which few-body groups are switched off altogether,
-and in particular nothing like the 150 of the neighbour scheme: the saving is
-N divided by the square of the group size, not N divided by the number of
-neighbours. Accuracy does not depend on N at all. A stable triple is taken
-out whatever N is, because once frozen it costs nothing. The factor is
-`NFEWFAC` in `src/groups.c`, to be changed when it has been measured with the
-compiled code.
+A group of 3 or more stars is only made when it saves work, which depends on
+how many bodies the main calculation has compared with the size of the group:
+12 for a group of three, 24 for four, 40 for five, 60 for six. Below those
+numbers the stars are simply left in the main calculation (pairs are always
+worth it). A stable triple is frozen whatever N is, because once frozen it
+costs nothing. The factor is `NFEWFAC` in `src/groups.c`.
 
-### `gfew` (standard value 1.0e-5)
-A few-body group is taken out if its perturbation gamma by the rest of the
-cluster (see `gclose`) is less than `gfew`, and put back if it rises above
-10 times `gfew`. Larger values take groups out sooner and keep them longer,
-which is faster but ignores more of the cluster's pull on them.
+### `gfew` (standard value 1.0e-2)
+A pair or group is made a regularised group if its gamma (current size) is
+less than `gfew`. When its gamma rises above 10 `gfew`, it first tries to take
+its nearest neighbour in (a binary meeting a star becomes a group of three),
+and if that would not be isolated it is split back into its stars. Two
+groups that meet see each other only as point masses, so a group whose
+nearest neighbour is another group takes it in as soon as that group alone
+perturbs it by more than `gfew` (two binaries meeting become a group of four),
+or, if the four would not be isolated, is split back into its stars.
+Because
+the perturbers are treated properly, a regularised group can be quite
+strongly perturbed and still be accurate; what `gfew` sets is mainly how
+early a close encounter is taken out of the main calculation. (It was 1e-5
+before regularisation, when groups were integrated without the cluster's
+pull. At 1e-3, close and very eccentric encounters in clumpy clusters were
+left in the main calculation and set the energy error.)
 
-### `etafew` (standard value 0.02)
-The timestep accuracy parameter of the few-body integrator: its step is
-`etafew` times the shortest free-fall or flyby time of any pair in the group
-(about 500 steps per orbit of an eccentric binary at 0.02, with an energy
-error of a few parts in 10^9 per orbit). Smaller is more accurate and slower.
+### `artol` (standard value 1.0e-10)
+The accuracy of the regularised integration: each step is accepted when two
+successive extrapolations agree to `artol` (relative). Smaller is more
+accurate and only a little slower (the extrapolation is of high order).
+
+### `gpert` (standard value 1.0e-7)
+A body is a perturber of a regularised group - the group's stars feel its
+tidal pull, and it feels them - if its own gamma on the group is above
+`gpert`. At most 64 perturbers are kept (the strongest). A perturber with
+gamma above 100 `gpert` is *strong*: the group is never integrated past the
+end of a strong perturber's step, so its position is always predicted
+within its step, as in the main integrator.
+
+### `etafew` (no longer used)
+The timestep parameter of the old (Hermite) few-body integrator, which has
+been replaced by regularisation. It is still accepted, with a note, so that
+old parameter files run.
 
 ## `&collisions` - stellar collisions
 
@@ -446,7 +484,8 @@ error of a few parts in 10^9 per orbit). Smaller is more accurate and slower.
 Two stars that pass within this distance of each other have collided. What
 happens then is set by `mergers`. 0 switches the check off. The same distance
 is used for every type of particle at present. A bound pair whose orbit would
-bring it within `rcoll` counts as well, as do stars inside a few-body group.
+bring it within `rcoll` counts as well, as do stars inside a regularised group
+(their smallest separation is watched during each regularised step).
 
 ### `mergers` (switch, standard value `.true.`)
 `.true.`: the two stars are merged into one and the run carries on. The new
@@ -476,10 +515,11 @@ mergers were added.
 The accuracy parameter of the Aarseth timestep criterion, which sets each
 particle's timestep from its acceleration and its derivatives. Smaller means
 shorter steps: more accurate and slower. 0.01 to 0.02 is usual.
-The standard value is 0.01 because HENDOS has no regularisation: perturbed
-hard binaries are integrated directly, and in clusters rich in them 0.02 gave
-energy errors of 1e-2 or worse where 0.01 gave about 1e-4, for about 25% more
-time. Without many hard binaries 0.02 is enough and faster.
+The standard value became 0.01 when HENDOS had no regularisation: perturbed
+hard binaries were integrated directly, and in clusters rich in them 0.02 gave
+energy errors of 1e-2 or worse where 0.01 gave about 1e-4. Now that they are
+regularised (`fewbody`) `eta` matters less for binaries, but 0.01 is kept as
+the standard until that has been measured again.
 
 ### `etap` (standard value 0.1)
 No particle's timestep may be longer than `etap` times the shortest time it

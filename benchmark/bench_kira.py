@@ -487,7 +487,7 @@ def main():
                 if 'binaries_closed' in r:
                     notes.append('binaries closed %d' % r['binaries_closed'])
                 if 'few_body_groups_formed' in r:
-                    notes.append('few-body %d, frozen %d' % (r['few_body_groups_formed'],
+                    notes.append('regularised %d, frozen %d' % (r['few_body_groups_formed'],
                                                             r.get('triples_frozen', 0)))
             lines.append('%-19s %7g %10.2f %13.3e %13.3e %10.4f  %s'
                          % (label, r['eta'], r['wall_s'], r['energy_error'],

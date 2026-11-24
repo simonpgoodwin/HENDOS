@@ -1,126 +1,13 @@
 /* ==============================================================
  * HENDOS - HErmite N-body Dynamics Of Systems - few.c
- * FEW-BODY TOOLS: a small integrator for an isolated group of a few
- * stars, and the stability test for a hierarchical triple. These know
- * nothing about the rest of the code. Internal units (G = 1).
- * (Archived Fortran equivalent: archive/fortran/src/nbfew.f90.)
+ * FEW-BODY TOOLS: orbital elements and the stability test for a
+ * hierarchical triple. These know nothing about the rest of the code.
+ * Internal units (G = 1). (The small Hermite integrator that used to be
+ * here for few-body groups has been replaced by the regularised
+ * integrator in ar.c; it is still in the archived Fortran,
+ * archive/fortran/src/nbfew.f90.)
  * ============================================================== */
 #include "hendos.h"
-
-/* accelerations a and jerks jk of the nm stars of a group from each
- * other, the square of the shortest pairwise free-fall or flyby time,
- * and the closest pair ic, jc with its squared separation */
-static void fewacc(int nm, const double *mm, vec3 *x, vec3 *vv, double e2, vec3 *a, vec3 *jk,
-                   double *tmin2, double *r2min, int *ic, int *jc)
-{
-    memset(a, 0, sizeof(vec3) * (size_t)nm);
-    memset(jk, 0, sizeof(vec3) * (size_t)nm);
-    *tmin2 = HUGE_VAL;
-    *r2min = HUGE_VAL;
-    *ic = *jc = -1;
-    for (int i = 0; i < nm - 1; i++)
-        for (int j = i + 1; j < nm; j++) {
-            double d[3], dv[3];
-            for (int k = 0; k < 3; k++) {
-                d[k] = x[j][k] - x[i][k];
-                dv[k] = vv[j][k] - vv[i][k];
-            }
-            double d2 = dot3(d, d);
-            if (d2 < *r2min) {
-                *r2min = d2;
-                *ic = i;
-                *jc = j;
-            }
-            double rad2 = d2 + e2, rinv = 1.0 / sqrt(rad2), rinv3 = rinv / rad2;
-            double rv = 3.0 * dot3(d, dv) / rad2;
-            for (int k = 0; k < 3; k++) {
-                double w = (dv[k] - rv * d[k]) * rinv3;
-                a[i][k] += mm[j] * d[k] * rinv3;
-                a[j][k] -= mm[i] * d[k] * rinv3;
-                jk[i][k] += mm[j] * w;
-                jk[j][k] -= mm[i] * w;
-            }
-            double tff = rad2 * rad2 * rinv / (mm[i] + mm[j]);
-            double tfl = rad2 / (dot3(dv, dv) + 1e-300);
-            if (tff < *tmin2) *tmin2 = tff;
-            if (tfl < *tmin2) *tmin2 = tfl;
-        }
-}
-
-/* integrate the isolated group of nm stars (masses mm, positions x and
- * velocities vv relative to its centre of mass) for a time tint.
- * 4th-order Hermite (predict, evaluate, correct, evaluate) with one
- * timestep shared by all the stars, dt = etaf * (shortest pairwise
- * free-fall or flyby time). It stops early if two stars come within
- * sqrt(rc2) of each other (rc2 > 0; ic, jc are then the pair and tdone
- * the time reached), or after NSTMAX steps (ic = -2). Otherwise
- * ic = -1 and tdone = tint. nst returns the number of steps. */
-void fewint(int nm, const double *mm, vec3 *x, vec3 *vv, double tint, double etaf, double e2,
-            double rc2, double *tdone, int *ic, int *jc, int64_t *nst)
-{
-    const int64_t NSTMAX = 20000000;
-    vec3 a0[KFMAX], j0[KFMAX], a1[KFMAX], j1[KFMAX], xp[KFMAX], vq[KFMAX];
-    double t = 0.0, tmin2, r2min;
-    int k1, k2;
-    *nst = 0;
-    *tdone = 0.0;
-    fewacc(nm, mm, x, vv, e2, a0, j0, &tmin2, &r2min, &k1, &k2);
-    for (;;) {
-        if (rc2 > 0.0 && r2min < rc2) {
-            *ic = k1;
-            *jc = k2;
-            *tdone = t;
-            return;
-        }
-        if (*nst >= NSTMAX) {
-            *ic = -2;
-            *jc = -1;
-            *tdone = t;
-            return;
-        }
-        if (t >= tint) break;
-        double dt = etaf * sqrt(tmin2);
-        int last = 0;
-        if (t + dt >= tint) {
-            dt = tint - t;
-            last = 1;
-        }
-        for (int i = 0; i < nm; i++)
-            for (int k = 0; k < 3; k++) {
-                xp[i][k] = x[i][k] + vv[i][k] * dt + a0[i][k] * dt * dt / 2.0
-                           + j0[i][k] * dt * dt * dt / 6.0;
-                vq[i][k] = vv[i][k] + a0[i][k] * dt + j0[i][k] * dt * dt / 2.0;
-            }
-        fewacc(nm, mm, xp, vq, e2, a1, j1, &tmin2, &r2min, &k1, &k2);
-        for (int i = 0; i < nm; i++)
-            for (int k = 0; k < 3; k++) {
-                double v1 = vv[i][k] + (a0[i][k] + a1[i][k]) * dt / 2.0
-                            + (j0[i][k] - j1[i][k]) * dt * dt / 12.0;
-                x[i][k] += (vv[i][k] + v1) * dt / 2.0 + (a0[i][k] - a1[i][k]) * dt * dt / 12.0;
-                vv[i][k] = v1;
-            }
-        /* evaluate at the corrected positions: the start of the next step */
-        fewacc(nm, mm, x, vv, e2, a0, j0, &tmin2, &r2min, &k1, &k2);
-        (*nst)++;
-        t = last ? tint : t + dt;
-    }
-    *ic = *jc = -1;
-    *tdone = tint;
-    /* keep the centre of mass exactly at the origin */
-    double mt = 0.0, cx[3] = {0, 0, 0}, cvv[3] = {0, 0, 0};
-    for (int i = 0; i < nm; i++) {
-        mt += mm[i];
-        for (int k = 0; k < 3; k++) {
-            cx[k] += mm[i] * x[i][k];
-            cvv[k] += mm[i] * vv[i][k];
-        }
-    }
-    for (int i = 0; i < nm; i++)
-        for (int k = 0; k < 3; k++) {
-            x[i][k] -= cx[k] / mt;
-            vv[i][k] -= cvv[k] / mt;
-        }
-}
 
 /* semi-major axis a (negative if unbound), eccentricity and specific
  * angular momentum h of the relative orbit rr, vr with G*(mass) = mu */

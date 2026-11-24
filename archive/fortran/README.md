@@ -6,6 +6,12 @@ longer the version in use.** That is the C code in `HENDOS/src`, built as
 translated from, routine by routine: `src/README.md` here describes every
 Fortran routine, and the C functions have the same names.
 
+Since it was archived, the C code has gained things the Fortran does not
+have: the Barnes-Hut tree, and regularised few-body groups (algorithmic
+regularisation with perturbers, `src/ar.c`, replacing the Hermite few-body
+integrator `fewint` that the Fortran still uses). So the C functions in
+`groups.c` and `ar.c` no longer match the Fortran routine for routine.
+
 The initial conditions generator `makeics` is still Fortran, but it is not
 archived. It is in `HENDOS/src/ics` and is built by `HENDOS/run/Makefile`.
 

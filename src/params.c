@@ -103,7 +103,9 @@ static Param table[] = {
     {"binaries", "gopen", 'd', &gopen, 0},
     {"binaries", "fewbody", 'l', &fewbody, 0},
     {"binaries", "gfew", 'd', &gfew, 0},
-    {"binaries", "etafew", 'd', &etafew, 0},
+    {"binaries", "etafew", 'd', &etafew, 0},       /* no longer used (see PARAMS_README) */
+    {"binaries", "artol", 'd', &artol, 0},
+    {"binaries", "gpert", 'd', &gpert, 0},
     {"collisions", "rcoll", 'd', &rcoll, 0},
     {"collisions", "mergers", 'l', &mergers, 0},
     {"neighbours", "useac", 'l', &useac, 0},
@@ -299,7 +301,7 @@ void readparams(const char *pfile)
     oorta = 15.3; oortb = -11.9; rho0 = 0.097; omegat = 0.0;   /* Bovy 2017; McKee+ 2015 */
     memset(tij, 0, sizeof tij);
     eta = 0.01; etap = 0.1; etas = 0.01; niter = 1; kmax = 40;
-    closebinaries = 1; fewbody = 1; gfew = 1.e-5; etafew = 0.02;
+    closebinaries = 1; fewbody = 1; gfew = 1.e-2; etafew = -1.0; artol = 1.e-10; gpert = 1.e-7;
     rcoll = 10.0; mergers = 1; restart_ = 0; trestart = 0.0;
     nensemble = 1; nparallel = 1; ensfirst = 1;
     useac = 0; nnbopt = 0; nnbmax = 0; etar = 0.01;
@@ -386,7 +388,12 @@ void readparams(const char *pfile)
     if (!closebinaries) fewbody = 0;
     if (fewbody) {
         if (gfew <= 0.0) BAD("gfew must be > 0");
-        if (etafew <= 0.0 || etafew > 0.2) BAD("etafew must be between 0 and 0.2");
+        if (gfew >= 0.1) BAD("gfew must be < 0.1");
+        if (artol <= 0.0 || artol > 1.e-4) BAD("artol must be between 0 and 1e-4");
+        if (gpert <= 0.0 || gpert >= gfew) BAD("need 0 < gpert < gfew");
+        if (etafew >= 0.0)
+            printf(" NOTE: etafew is no longer used (few-body groups are now regularised; "
+                   "their accuracy is set by artol)\n");
     }
     /* the neighbour scheme is for direct summation only */
     if (useac && usetree) {

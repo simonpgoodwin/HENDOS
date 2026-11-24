@@ -590,6 +590,169 @@ def test_ensemble(t):
     t.check('adding members: member 5 has snapshots', len(new.snaps), 3, 'equal')
 
 
+# ---- regularised groups (src/ar.c) ---------------------------------
+def orbit_elements(m1, m2, x1, x2, v1, v2):
+    """Semi-major axis (pc) and eccentricity of two stars (km/s, pc)."""
+    mt = m1 + m2
+    rr = x1 - x2
+    vr = v1 - v2
+    e = 0.5 * vr @ vr - G * mt / np.linalg.norm(rr)
+    a = -G * mt / (2 * e)
+    h = np.cross(rr, vr)
+    return a, np.sqrt(max(0.0, 1 - h @ h / (G * mt * a)))
+
+
+def flyby():
+    """A binary (a = 1e-4 pc, e = 0.5, tilted) and a star passing 5e-4 pc
+    from it at 10 km/s: a perturbation of a few times 1e-3 at closest, so
+    the binary is a regularised pair throughout, and not chaotic, so a
+    very accurate direct run is a good reference."""
+    m, pos, vel, period = binary(1.0, 1.0, 1.0e-4, 0.5)
+    th = 0.7
+    rot = np.array([[1, 0, 0], [0, np.cos(th), -np.sin(th)], [0, np.sin(th), np.cos(th)]])
+    pos = pos @ rot.T
+    vel = vel @ rot.T
+    m = np.concatenate([m, [1.0]])
+    pos = np.vstack([pos, [-0.02, 5.0e-4, 0.0]])
+    vel = np.vstack([vel, [10.0, 0.0, 0.0]])
+    pos -= (m[:, None] * pos).sum(0) / m.sum()
+    vel -= (m[:, None] * vel).sum(0) / m.sum()
+    return m, pos, vel
+
+
+def test_perturbed_flyby(t):
+    """A star flies past a binary: the binary as a regularised pair with
+    one perturber, compared with a very accurate direct integration (no
+    binary treatment). The binary's orbit after the flyby and the
+    deflection of the star must both agree."""
+    m, pos, vel = flyby()
+    t.write_ics('ics.dat', m, pos, vel)
+    tend = 0.004
+    ref = t.run('ref', 'ics.dat', run__tend=tend, run__tout=tend / 4, output__tsnap=tend,
+                binaries__closebinaries=False, integrator__eta=0.001,
+                integrator__etap=0.005).last
+    # gclose, gopen tiny: the pair is regularised all the time, never Kepler
+    ar = t.run('ar', 'ics.dat', run__tend=tend, run__tout=tend / 4, output__tsnap=tend,
+               binaries__gclose=1e-12, binaries__gopen=1e-11).last
+    res = []
+    for s in (ref, ar):
+        o = np.argsort(s.id)
+        x, v = s.pos[o], s.vel[o]
+        a, e = orbit_elements(1.0, 1.0, x[0], x[1], v[0], v[1])
+        res.append((a, e, v[2]))
+    t.check('regularised groups formed', int(ar.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('semi-major axis, regularised / reference - 1', res[1][0] / res[0][0] - 1, 1e-6)
+    t.check('eccentricity, regularised - reference', res[1][1] - res[0][1], 1e-6)
+    t.check("passing star's velocity difference (km/s)",
+            np.linalg.norm(res[1][2] - res[0][2]), 1e-5)
+    t.check('energy error', energy_error(ar), 1e-6)
+
+
+def test_triple_regularised(t):
+    """A stable hierarchical triple that is NOT frozen (gclose tiny), so it
+    is integrated as a regularised group of three for 20 outer orbits,
+    among distant onlookers (so that it pays)."""
+    m1, p1, v1, pin = binary(1.0, 1.0, 1.0e-4, 0.3)
+    mt = 3.0
+    rout = 1.0e-3
+    vout = np.sqrt(G * mt / rout)
+    pos = np.vstack([p1 - np.array([rout / 3, 0, 0]), [[2 * rout / 3, 0, 0]]])
+    vel = np.vstack([v1 - np.array([0, vout / 3, 0]), [[0, 2 * vout / 3, 0]]])
+    pout = 2 * np.pi * np.sqrt(rout ** 3 / mt) * TUNIT
+    rng = np.random.default_rng(3)
+    far = np.array([5.0 * sphere_point(rng) for _ in range(12)])
+    m = np.concatenate([[1.0, 1.0, 1.0], np.full(12, 0.01)])
+    pos = np.vstack([pos, far])
+    vel = np.vstack([vel, np.zeros((12, 3))])
+    t.write_ics('ics.dat', m, pos, vel)
+    r = t.run('trreg', 'ics.dat', run__tend=20 * pout, run__tout=pout, output__tsnap=pout,
+              binaries__gclose=1e-15, binaries__gopen=1e-14)
+    s = r.last
+    o = np.argsort(s.id)
+    a, e = orbit_elements(1.0, 1.0, s.pos[o][0], s.pos[o][1], s.vel[o][0], s.vel[o][1])
+    t.check('regularised groups formed', int(s.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('triples frozen', int(s.value('triples_frozen')), 0, 'equal')
+    t.check('energy error', energy_error(s), 1e-8)
+    # the inner orbit only changes by the (small) secular effect of the outer star
+    t.check('inner semi-major axis / start - 1', a / 1.0e-4 - 1, 1e-3)
+
+
+def test_eccentric_plunge(t):
+    """A binary with e = 0.9999 (pericentre 1e-8 pc, 2 solar radii) whose
+    apocentre reaches out towards a third star: too perturbed at apocentre
+    to be a Kepler binary, and so tight at pericentre that the main
+    integrator cannot follow it. It is regularised while it plunges (gamma
+    from its current separation)."""
+    a, ecc = 1.0e-4, 0.9999
+    m, pos, vel, period = binary(1.0, 1.0, a, ecc)
+    m = np.concatenate([m, [1.0], np.full(12, 0.01)])
+    rng = np.random.default_rng(5)
+    pos = np.vstack([pos, [[0.0, 1.2e-3, 0.0]], [5.0 * sphere_point(rng) for _ in range(12)]])
+    vel = np.vstack([vel, [[0.0, 0.0, 0.0]], np.zeros((12, 3))])
+    t.write_ics('ics.dat', m, pos, vel)
+    r = t.run('plunge', 'ics.dat', run__tend=10 * period, run__tout=period,
+              output__tsnap=period)
+    s = r.last
+    t.check('regularised groups formed', int(s.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('energy error', energy_error(s), 1e-6)
+
+
+def test_hyperbolic_plunge(t):
+    """Two stars on an unbound orbit pass within 1e-8 pc (2 solar
+    radii) of each other. Directly integrated the steps would have to
+    be shorter than the shortest level; as a regularised (unbound) pair
+    the encounter is easy."""
+    m = np.concatenate([[1.0, 1.0], np.full(12, 0.01)])
+    b = 1.0e-8
+    vinf = 5.0
+    # start 1e-3 pc apart: impact parameter for a pericentre q is
+    # b^2 = q^2 + 2 G M q / v^2
+    q = b
+    bimp = np.sqrt(q * q + 2 * G * 2.0 * q / vinf ** 2)
+    rng = np.random.default_rng(9)
+    pos = np.vstack([[[-5.0e-4, bimp / 2, 0], [5.0e-4, -bimp / 2, 0]],
+                     [5.0 * sphere_point(rng) for _ in range(12)]])
+    vel = np.vstack([[[vinf / 2, 0, 0], [-vinf / 2, 0, 0]], np.zeros((12, 3))])
+    t.write_ics('ics.dat', m, pos, vel)
+    tend = 3 * 1.0e-3 / (vinf / 0.9778)
+    r = t.run('hyp', 'ics.dat', run__tend=tend, run__tout=tend / 3, output__tsnap=tend / 3)
+    s = r.last
+    t.check('regularised groups formed', int(s.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('energy error', energy_error(s), 1e-6)
+    t.check('steps held at kmax', 'steps held at kmax' in r.log and
+            any(int(x) > 0 for x in re.findall(r'steps held at kmax this interval (\d+)', r.log)),
+            False, 'equal')
+
+
+def test_restart_regularised(t):
+    """A restart in the middle of a run with regularised groups ends exactly
+    where the unbroken run does (their state, perturber lists and step
+    horizons are all made again in the same way)."""
+    rng = np.random.default_rng(21)
+    m, pos, vel = plummer(100, seed=13)
+    mb, pb, vb = [], [], []
+    for k in range(30):
+        mk, pk, vk, _ = binary(0.6, 0.4, 10 ** rng.uniform(-3.5, -2.5), rng.uniform(0, 0.9))
+        mb += list(mk)
+        pb += list(pk + pos[k])
+        vb += list(vk + vel[k])
+    m = np.concatenate([mb, m[30:]])
+    pos = np.vstack([pb, pos[30:]])
+    vel = np.vstack([vb, vel[30:]])
+    t.write_ics('ics.dat', m, pos, vel)
+    ref = t.run('ref', 'ics.dat', run__tend=0.5, output__trestart=0.25).last
+    t.run('rst', 'ics.dat', run__tend=0.25, output__trestart=0.25)
+    s = t.run('rst', 'ics.dat', run__tend=0.5, output__trestart=0.25, run__restart=True).last
+    t.check('regularised groups formed', int(ref.value('few_body_groups_formed')) >= 1,
+            True, 'equal')
+    t.check('largest position difference (pc)', np.abs(s.pos - ref.pos).max(), 1e-12)
+    t.check('energy error', energy_error(ref), 1e-6)
+
+
 # ----------------------------------------------------------------------
 def all_tests():
     tests = [(name[5:], fn) for name, fn in globals().items()

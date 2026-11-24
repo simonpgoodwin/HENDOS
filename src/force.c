@@ -134,6 +134,9 @@ void forces(void)
     } else {
         for (int ia = 0; ia < nact; ia++) direct(ilist[ia], n >= nompj);
     }
+    /* regularised groups: their perturbers feel their stars, and their
+     * c.o.m. the mean pull on their stars (ar.c) */
+    if (fewbody) arcorrect();
 }
 
 /* kinetic, gravitational potential (negative) and tidal potential
