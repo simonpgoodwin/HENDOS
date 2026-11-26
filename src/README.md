@@ -60,7 +60,7 @@ No calculations, only declarations of everything shared between the files:
   `bnum`, `bmode`, `bmass`, `bident`, `btype`, `brel`, `brel2`, `bx`, `bv`,
   `bepoch`, `bein`, `bcm` (the slot of its c.o.m. body), and for regularised
   groups `bend`, `bend8` (how far it has been integrated) and `npl`, `plist`
-  (its perturbers), with up to `KFMAX` = 6 stars and `NPMAX` = 64 perturbers
+  (its perturbers), with up to `KFMAX` = 6 stars and `NPMAX` = 256 perturbers
   each
 - the neighbour-scheme arrays (split forces, neighbour lists, regular steps)
 - the prototype of every function used outside its own file, and the

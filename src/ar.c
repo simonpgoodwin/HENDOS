@@ -126,7 +126,12 @@
  * c.o.m. and was integrated far too coarsely (found in a cold fractal, an
  * energy jump of 1.7e-4 in one passage). arcorrect therefore lowers
  * tpair2 (and rmin2, for the collision check) of every active body from
- * the distances it has just worked out for the corrections.
+ * the distances it has just worked out for the corrections. And the c.o.m.
+ * of an UNBOUND regularised pair steps at least every etap times the
+ * pair's flyby time r/v (unboundflyby), or the pair passes pericentre and
+ * drifts far apart inside one c.o.m. step (found: unbound pairs in a small
+ * cluster let go only when they had reached 0.05 pc, with far more
+ * perturbers than the list can hold).
  *
  * COLLISIONS inside a group: the smallest separation of each pair is
  * watched during the kicks; if it falls below rcoll the two stars are
@@ -203,6 +208,7 @@ void aralloc(int ng)
         plok[k] = 0;
         dn[k].t = dn[k].s = NULL;
         npl[k] = 0;
+        plist[k] = NULL;
     }
     ndn = ng;
 }
@@ -224,7 +230,9 @@ void armovegroup(int from, int to)
     dn[from] = tmp;               /* (swapped, so no memory is lost) */
     dn[from].nn = 0;
     npl[to] = npl[from];
-    memcpy(plist[to], plist[from], sizeof(int) * (size_t)npl[from]);
+    int *tl = plist[to];
+    plist[to] = plist[from];
+    plist[from] = tl;              /* (swapped, so no memory is lost) */
     bend[to] = bend[from];
     bend8[to] = bend8[from];
     plok[to] = plok[from];
@@ -619,6 +627,7 @@ static int64_t mkplist(int k, arsys *s, const double *y, double t0)
 {
     int c = bcm[k], np = 0, nst = 0;
     int64_t h8 = tk[c] + dtk[c];
+    if (!plist[k]) plist[k] = xalloc(sizeof(int) * NPMAX);     /* e.g. after a restart */
     double gs = arsize(s, y), xc[3], gam[NPMAX];
     int idx[NPMAX];
     tset(c, s->cc, &s->ct0);
@@ -1058,6 +1067,33 @@ static int corrfor(int i, double tb, double a[3], double jk[3], double *tdg, dou
     return has;
 }
 
+/* the flyby time squared, r^2/v^2, of a regularised pair that is
+ * unbound (HUGE_VAL otherwise), at internal time tb: the c.o.m. must step
+ * at least that often, or the pair passes pericentre and drifts far apart
+ * inside one c.o.m. step before anyone looks at it again (see TIMESTEPS) */
+static double unboundflyby(int k, double tb)
+{
+    double mm[KFMAX];
+    vec3 x[KFMAX], u[KFMAX];
+    if (bmode[k] != 2) return HUGE_VAL;
+    int nm = arstate(k, tb, mm, x, u), l1 = -1, l2 = -1;
+    for (int l = 0; l < nm; l++)
+        if (mm[l] > 0.0) {
+            if (l1 < 0) l1 = l;
+            else if (l2 < 0) l2 = l;
+            else return HUGE_VAL;            /* more than two stars */
+        }
+    if (l2 < 0) return HUGE_VAL;
+    double d[3], dv[3];
+    for (int q = 0; q < 3; q++) {
+        d[q] = x[l1][q] - x[l2][q];
+        dv[q] = u[l1][q] - u[l2][q];
+    }
+    double r2 = dot3(d, d), v2 = dot3(dv, dv);
+    if (0.5 * v2 < (mm[l1] + mm[l2]) / sqrt(r2)) return HUGE_VAL;   /* bound */
+    return r2 / (v2 + 1e-300);
+}
+
 /* the longest step a correction a, jk allows a body whose force is f;
  * tdg the shortest dynamical time of the groups it comes from (see
  * TIMESTEPS above) */
@@ -1084,6 +1120,10 @@ void arcorrect(void)
     for (int ia = 0; ia < nact; ia++) {
         int i = ilist[ia];
         double a[3], jk[3], tdg, tp2, r2m;
+        if (ib[i] >= 0) {
+            double tf = unboundflyby(ib[i], tb);
+            if (tf < tpair2[i]) tpair2[i] = tf;
+        }
         if (!corrfor(i, tb, a, jk, &tdg, &tp2, &r2m)) continue;
         /* the pairwise step limit (etap) and closest approach measured
          * against the group's stars, not just its c.o.m. (see TIMESTEPS) */
@@ -1113,8 +1153,12 @@ static void arcapnew(int k, int64_t t8)
     if (pdirty) pindex();
     for (int e = -1; e < npl[k]; e++) {
         int j = e < 0 ? c : plist[k][e];
-        if (tk[j] != t8 || !corrfor(j, tb, a, jk, &tdg, &tp2, &r2m)) continue;
-        double cap = fmin(capfor(a, jk, f0[j], tdg), etap * sqrt(tp2));
+        if (tk[j] != t8) continue;
+        double cap = HUGE_VAL;
+        if (e < 0) cap = etap * sqrt(unboundflyby(k, tb));
+        if (corrfor(j, tb, a, jk, &tdg, &tp2, &r2m))
+            cap = fmin(cap, fmin(capfor(a, jk, f0[j], tdg), etap * sqrt(tp2)));
+        if (cap == HUGE_VAL) continue;
         if ((double)dtk[j] * tick <= cap) continue;
         int lv = commlev(getlevel(cap), t8);
         if (lv > lev[j]) {

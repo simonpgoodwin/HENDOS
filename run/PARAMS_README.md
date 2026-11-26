@@ -468,7 +468,7 @@ accurate and only a little slower (the extrapolation is of high order).
 ### `gpert` (standard value 1.0e-7)
 A body is a perturber of a regularised group - the group's stars feel its
 tidal pull, and it feels them - if its own gamma on the group is above
-`gpert`. At most 64 perturbers are kept (the strongest). A perturber with
+`gpert`. At most 256 perturbers are kept (the strongest). A perturber with
 gamma above 100 `gpert` is *strong*: the group is never integrated past the
 end of a strong perturber's step, so its position is always predicted
 within its step, as in the main integrator.

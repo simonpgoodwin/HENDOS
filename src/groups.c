@@ -32,8 +32,8 @@
  * Star i, after its step, is a candidate if its step < dtclose and its
  * nearest neighbour j is on the same block. Then:
  * CLOSE   i, j single, bound, g_orb < gclose              -> 1 Kepler
- *         i, j single, bound or coming together, g_cur < gfew
- *                                                         -> 2 (a pair)
+ *         i, j single, bound or plunging (unbound and coming together,
+ *         pericentre < separation / 10), g_cur < gfew     -> 2 (a pair)
  * FEW     otherwise the pair and the next nearest body are tried as a
  *         group; so is a star and a nearby group. Made if its own
  *         g_cur < gfew and it pays (see tryfew)            -> 2
@@ -44,6 +44,10 @@
  *   3 frozen:  g_cur > gopen      -> regularised (2)
  *   any:       g_cur > 10 gfew    -> takes its nearest body in, if the
  *                                    result is a group, or is opened
+ *   2 pair:    unbound, moving apart, and twice as far apart as when it
+ *              was made, or g_cur > gfew -> opened
+ *   2 any:     perturber list full and its weakest perturber still strong
+ *                                 -> opened (too big to regularise)
  *   2 any:     its nearest body is a group perturbing it by more than
  *              gfew on its own   -> takes it in, if the result is a group,
  *                                   or else is opened
@@ -681,7 +685,15 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
         acok[lo] = 0;
         startbody(1, &lo, t8, 0);
     }
-    if (mode == 2) arstart(k, t8);
+    if (mode == 2) {
+        bein[k] = 0.0;                 /* a pair: its separation when made (see bincheck) */
+        if (nm == 2) {
+            double d[3] = {bx[k][0][0] - bx[k][1][0], bx[k][0][1] - bx[k][1][1],
+                           bx[k][0][2] - bx[k][1][2]};
+            bein[k] = norm3(d);
+        }
+        arstart(k, t8);
+    }
     ardirty();
 }
 
@@ -760,7 +772,8 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
  * regularisation does (Aarseth 2003): a very eccentric binary whose
  * apocentre reaches out among other stars is still regularised while it
  * plunges through pericentre, and let go when it swings out again; an
- * unbound pair is regularised for a close hyperbolic encounter. Either,
+ * unbound pair is regularised for a close hyperbolic encounter (only a
+ * plunge, whose pericentre is less than a tenth of its separation). Either,
  * integrated directly, can need steps shorter than the shortest level
  * (kmax) and ruin the energy; regularised, any pericentre is easy. With
  * the perturbers treated properly (ar.c) it does not matter that the
@@ -784,6 +797,12 @@ static int pairstate(int i, int j)
     double rn = norm3(rr);
     int two[2] = {i, j}, bound = ebind < 0.0;
     if (!bound && (!fewbody || dot3(rr, vr) >= 0.0)) return 0;
+    /* an unbound pair only for a plunge: its pericentre well inside its
+     * separation now. A gentle flyby the main integrator follows easily,
+     * and regularised it only gathers more perturbers than the list holds
+     * (found: flybys at 2e-3 pc in a 200-star cluster each put 1e-7 into
+     * the energy) */
+    if (!bound && pericentre(mb, rr, vr) > 0.1 * rn) return 0;
     /* gamma scales as size^3, so one sum gives it for both sizes */
     gperturb(xc, vcm, mb, rn, 2, two, &gam, &tp2);
     if (bound) {
@@ -842,6 +861,12 @@ static void toar(int i, int64_t t8, double tnow)
             bv[k][l][c] = um[l][c] - v[i][c];
         }
     bmode[k] = 2;
+    bein[k] = 0.0;
+    if (nm == 2) {
+        double d[3] = {bx[k][0][0] - bx[k][1][0], bx[k][0][1] - bx[k][1][1],
+                       bx[k][0][2] - bx[k][1][2]};
+        bein[k] = norm3(d);
+    }
     nfewformed++;
     arstart(k, t8);
 }
@@ -984,6 +1009,41 @@ void bincheck(int64_t t8, double tnow)
             opengroup(i, t8, tnow, &nm, list);
             dbgafter("open<2", tnow);
             break;
+        }
+        /* a regularised group that should simply be let go (no stars move
+         * slots, so it counts as the one open of this block):
+         *  - an unbound pair moving apart: the encounter is over, and it is
+         *    only growing - opened once it is twice as far apart as when it
+         *    was made a group (kept in bein, which only frozen triples
+         *    otherwise use), or at gamma > gfew; a receding unbound pair is
+         *    never made a group, so it cannot flicker
+         *  - a group whose perturber list is full while the weakest perturber
+         *    kept is still strong: it has grown too big for its perturbers to
+         *    be counted, and the ones left off are missing from the energy
+         *    (found: unbound pairs that had drifted to 0.05 pc in a 200-star
+         *    cluster each put 2e-7 into the energy when finally opened) */
+        if (fewbody && mode == 2) {
+            int letgo = 0;
+            if (bnum[k] == 2 && gorb == HUGE_VAL) {
+                double rr[3], vr[3];
+                for (int c = 0; c < 3; c++) {
+                    rr[c] = bx[k][0][c] - bx[k][1][c];
+                    vr[c] = bv[k][0][c] - bv[k][1][c];
+                }
+                if (dot3(rr, vr) > 0.0 && (gam > gfew || norm3(rr) > 2.0 * bein[k])) letgo = 1;
+            }
+            if (npl[k] == NPMAX) {
+                int j = plist[k][NPMAX - 1];
+                double d[3] = {r[j][0] - r[i][0], r[j][1] - r[i][1], r[j][2] - r[i][2]};
+                double dn = norm3(d), gj = 2.0 * gs * gs * gs * m[j] / (m[i] * dn * dn * dn);
+                if (gj > 100.0 * gpert) letgo = 1;
+            }
+            if (letgo) {
+                dbgbefore(tnow);
+                opengroup(i, t8, tnow, &nm, list);
+                dbgafter("let go", tnow);
+                break;
+            }
         }
         if (gam > 10.0 * gfew || (!fewbody && gorb > gopen)) {
             int done = 0;

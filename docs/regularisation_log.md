@@ -36,7 +36,7 @@ is accurate to `artol` = 1e-10.
 
 How a group is coupled to the cluster:
 - **Perturbers.** These are bodies whose own gamma on the group is above
-  `gpert` (1e-7); at most 64 are kept.
+  `gpert` (1e-7); at most 64 were kept (256 since 26 November, see the addendum).
   - *Strong* perturbers (gamma above 1e-5) are followed exactly.
   - *Weak* ones act through a summed tidal tensor, interpolated in time.
   - Perturbers are predicted from their Taylor series, never past the end of
@@ -157,3 +157,32 @@ How the speed was found (from profiling):
   is field 9 of each `DEBUG` line.
 - `HENDOS_TRACE="t1 t2"` gives the energy block by block. Use it from a
   restart file just before the problem, because a long window is very slow.
+
+## Addendum, 26 November 2026: before the kira benchmark
+A dry run of the benchmark on a smooth 200-star Plummer sphere showed
+regularisation making HENDOS *less* accurate: largest dE/E 7e-7, against
+2e-9 with `fewbody` off. Each group cost about 1e-7 when it was opened. The
+cause was the perturber list overflowing. Mild unbound flybys at about
+2e-3 pc had been regularised, had drifted apart within one centre-of-mass
+step, and by then had more perturbers than the 64 the list held. Fixes:
+- **Unbound pairs are regularised only for a plunge**: two-body pericentre
+  less than a tenth of the current separation.
+- **The centre of mass of an unbound pair steps at least every `etap` times
+  the pair's flyby time r/v.**
+- **A receding unbound pair is let go** once it is twice as far apart as when
+  it was made a group (its separation then is kept in `bein`), or at
+  gamma > `gfew`.
+- **A group whose perturber list is full** while the weakest perturber kept
+  is still strong is let go.
+- **The perturber list holds 256** (`NPMAX`); each list is allocated only
+  when a group is regularised.
+
+Results (largest dE/E), before -> after:
+
+| Run | Before | After |
+|---|---|---|
+| 200-star Plummer, no binaries | 7e-7 | 3.5e-8 |
+| fractal 3 | 1.4e-4 | 8e-6 |
+| Plummer with 500 binaries | 3e-7 | 4e-8 |
+
+The 25 tests pass, also under the sanitisers.

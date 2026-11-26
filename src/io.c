@@ -84,7 +84,7 @@ void allocarrays(void)
     bx = xalloc(sizeof(*bx) * ng); bv = xalloc(sizeof(*bv) * ng);
     bcm = xalloc(sizeof(int) * ng); bend = xalloc(sizeof(double) * ng);
     bend8 = xalloc(sizeof(int64_t) * ng);
-    npl = xalloc(sizeof(int) * ng); plist = xalloc(sizeof(*plist) * ng);
+    npl = xalloc(sizeof(int) * ng); plist = xalloc(sizeof(int *) * ng);
     aralloc((int)ng);
     nalloc = n;
     for (int i = 0; i < n; i++) {

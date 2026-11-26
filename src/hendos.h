@@ -30,7 +30,7 @@
 #endif
 
 #define KFMAX 6            /* most stars in a group */
-#define NPMAX 64           /* most perturbers of a regularised group (ar.c) */
+#define NPMAX 256          /* most perturbers of a regularised group (ar.c) */
 #define NTYPES 5           /* particle types */
 #define NSTR 512
 typedef double vec3[3];
@@ -83,7 +83,8 @@ EXT int *bnum, *bmode;                 /* stars in the group; 1 binary, 2 regula
 EXT int *bcm;                          /* slot of the group's c.o.m. body */
 EXT double *bend;                      /* regularised: integrated up to this time (ar.c) */
 EXT int64_t *bend8;                    /* ... the same in the integer clock */
-EXT int *npl, (*plist)[NPMAX];         /* regularised: its perturbers (slots) */
+EXT int *npl, **plist;                 /* regularised: its perturbers (slots); a list is
+                                          allocated (NPMAX) when the group is regularised */
 EXT double (*bmass)[KFMAX], (*brel)[6], (*brel2)[6], *bepoch;
 EXT double *bein;                     /* frozen triple: its internal energy when frozen */
 EXT int (*bident)[KFMAX], (*btype)[KFMAX];
