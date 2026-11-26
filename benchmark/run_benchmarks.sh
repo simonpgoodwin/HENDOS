@@ -3,7 +3,7 @@
 # HENDOS against Starlab's kira: the whole benchmark in one go
 #
 #   cd HENDOS/benchmark
-#   ./run_benchmarks.sh            the standard set (an hour or so)
+#   ./run_benchmarks.sh            the standard set (a few hours: three seeds)
 #   ./run_benchmarks.sh quick      one small test, to try things out (minutes)
 #   ./run_benchmarks.sh big        the standard set plus 16,000 stars (many hours)
 #   ./run_benchmarks.sh check      only build, make the stars and run the check
@@ -23,7 +23,7 @@
 #   KIRA      the kira executable                      [kira, on your path]
 #   SEEDS     random number seeds: every test is run once for each
 #             (single runs vary, so use several for anything you quote)
-#                                                      [12345]
+#                                                      ["1 2 3"]
 #   THREADS   OpenMP threads for HENDOS. 1 is the fair comparison with
 #             kira, which is serial                    [1]
 #   MAKE      0 = use the executables already in ../run, do not run make
