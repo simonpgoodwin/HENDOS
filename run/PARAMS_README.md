@@ -454,8 +454,15 @@ and if that would not be isolated it is split back into its stars. Two
 groups that meet see each other only as point masses, so a group whose
 nearest neighbour is another group takes it in as soon as that group alone
 perturbs it by more than `gfew` (two binaries meeting become a group of four),
-or, if the four would not be isolated, is split back into its stars.
-Because
+or, if the four would not be isolated, the wider of the two is split back
+into its stars (the tighter one stays a group; its neighbours see it
+exactly, through its perturber list). The sizes of both groups are counted,
+every group is looked at (not only the nearest body), and this is checked
+whichever block the other group is on. A group made by a group
+meeting another body need only have gamma below 5 `gfew` (`GMULT` in
+`src/groups.c`): in dense sub-clumps two hard binaries are never isolated
+together to `gfew`, and being split instead cost up to 1e-3 of the energy
+each time. Because
 the perturbers are treated properly, a regularised group can be quite
 strongly perturbed and still be accurate; what `gfew` sets is mainly how
 early a close encounter is taken out of the main calculation. (It was 1e-5
@@ -471,10 +478,12 @@ accurate and only a little slower (the extrapolation is of high order).
 ### `gpert` (standard value 1.0e-7)
 A body is a perturber of a regularised group - the group's stars feel its
 tidal pull, and it feels them - if its own gamma on the group is above
-`gpert`. At most 256 perturbers are kept (the strongest). A perturber with
-gamma above 100 `gpert` is *strong*: the group is never integrated past the
-end of a strong perturber's step, so its position is always predicted
-within its step, as in the main integrator.
+`gpert`. There is no limit on how many: in a dense clump a group can have a
+thousand. A perturber with gamma above 100 `gpert` is *strong* (at most 256
+of them, the strongest, are treated as strong; any more count as weak): the
+group is never integrated past the end of a strong perturber's step, so its
+position is always predicted within its step, as in the main integrator. The
+weak ones act on the group through their summed tidal field.
 
 ### `etafew` (no longer used)
 The timestep parameter of the old (Hermite) few-body integrator, which has

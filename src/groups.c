@@ -29,14 +29,19 @@
  * with s its current separation, or the diameter of a larger group (is
  * it isolated NOW? - for regularised groups, as in KS regularisation).
  *
- * Star i, after its step, is a candidate if its step < dtclose and its
- * nearest neighbour j is on the same block. Then:
+ * Star i, after its step, is a candidate if its step < dtclose; its
+ * nearest neighbour j may be on any block (a body between steps is
+ * taken in at its predicted state - see syncbody). Then:
  * CLOSE   i, j single, bound, g_orb < gclose              -> 1 Kepler
  *         i, j single, bound or plunging (unbound and coming together,
- *         pericentre < separation / 1000), g_cur < gfew   -> 2 (a pair)
+ *         pericentre < separation / 1000), g_cur < gfew, and no other
+ *         group would open it at once (grpworst)          -> 2 (a pair)
  * FEW     otherwise the pair and the next nearest body are tried as a
  *         group; so is a star and a nearby group. Made if its own
- *         g_cur < gfew and it pays (see tryfew)            -> 2
+ *         g_cur < gfew (GMULT gfew if one of them is a group), no
+ *         other group would open it at once (grpworst), and it pays; a
+ *         regularised group is taken in only at the end of its c.o.m.'s
+ *         step (tryfew)                                   -> 2
  * Groups, after each step of their c.o.m.:
  *   1 Kepler:  g_orb > gopen      -> a regularised pair (2)
  *   2 pair:    g_orb < gclose     -> Kepler (1), if bound
@@ -46,11 +51,10 @@
  *                                    result is a group, or is opened
  *   2 pair:    unbound, moving apart, and twice as far apart as when it
  *              was made, or g_cur > gfew -> opened
- *   2 any:     perturber list full and its weakest perturber still strong
- *                                 -> opened (too big to regularise)
- *   2 any:     its nearest body is a group perturbing it by more than
- *              gfew on its own   -> takes it in, if the result is a group,
- *                                   or else is opened
+ *   2 any:     another group, no wider than it and on any block, perturbs
+ *              it by more than gfew counting both sizes (grpworst)
+ *                                -> takes it in, if the result is a group,
+ *                                   or else is opened (the wider gives way)
  * (gopen > gclose and the factor 10 give hysteresis, so groups do not
  * flicker.) Binaries in the initial conditions are closed at the start.
  * A star that leaves a group makes the group large, so its gamma rises
@@ -91,6 +95,9 @@
 #include "hendos.h"
 
 #define NFEWFAC 2    /* a multiple of nm stars needs NFEWFAC*nm*(nm-1) bodies to pay */
+#define GMULT 5.0    /* >>> CHANGE HERE: a multiple made from a group and other bodies is
+                        made if its gamma < GMULT * gfew (others: < gfew); it is opened
+                        at 10 gfew */
 #define PLUNGE 1.0e-3  /* >>> CHANGE HERE: an unbound pair is regularised only if its
                           pericentre < PLUNGE * its separation (see pairstate) */
 
@@ -790,31 +797,17 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
  * regularised pair, which watches for it, or with fewbody off it is left
  * in the main integration, and collcheck merges the stars (or stops the
  * run) when they actually meet - not before. */
-/* would a group of mass mb, size sz at xc have more than NPMAX bodies
- * with gamma > 100 gpert? Then its list fills and it is let go at once
- * (the rule in bincheck), so it is not worth making a group at all */
-static int overfull(const double xc[3], double mb, double sz, int i, int j)
-{
-    int cnt = 0;
-    double f = 2.0 * sz * sz * sz / (mb * 100.0 * gpert);
-    for (int l = 0; l < n; l++) {
-        if (l == i || l == j || m[l] <= 0.0) continue;
-        double d[3] = {r[l][0] - xc[0], r[l][1] - xc[1], r[l][2] - xc[2]};
-        double d2 = dot3(d, d);
-        if (f * m[l] > d2 * sqrt(d2) && ++cnt >= NPMAX) return 1;
-    }
-    return 0;
-}
+static int grpworst(const double xc[3], double mb, double sz, int nex, const int *ex, double tnow);
 
-static int pairstate(int i, int j)
+static int pairstate(int i, int j, double tnow)
 {
     if (ib[i] >= 0 || ib[j] >= 0) return 0;
     double mb = m[i] + m[j], rr[3], vr[3], xc[3], vcm[3], ebind, rapo, gam, tp2;
     for (int k = 0; k < 3; k++) {
-        rr[k] = r[i][k] - r[j][k];
-        vr[k] = v[i][k] - v[j][k];
-        xc[k] = (m[i] * r[i][k] + m[j] * r[j][k]) / mb;
-        vcm[k] = (m[i] * v[i][k] + m[j] * v[j][k]) / mb;
+        rr[k] = rp[i][k] - rp[j][k];
+        vr[k] = vp[i][k] - vp[j][k];
+        xc[k] = (m[i] * rp[i][k] + m[j] * rp[j][k]) / mb;
+        vcm[k] = (m[i] * vp[i][k] + m[j] * vp[j][k]) / mb;
     }
     pairorbit(mb, rr, vr, &ebind, &rapo);
     double rn = norm3(rr);
@@ -837,14 +830,79 @@ static int pairstate(int i, int j)
         if (gapo < gclose && !collide) return 1;
     }
     if (!fewbody || gam >= gfew) return 0;
-    /* a wide bound pair whose list would fill at apocentre: it is let go
-     * as soon as it swings out, and made a group again at the next
-     * pericentre (found: a 0.03 pc binary in a 1000-star Plummer sphere,
-     * made a group and let go every orbit, 5400 times in 10 Myr, put the
-     * energy error up from 1e-8 to 2e-7). The main integrator follows it
-     * well, so leave it there - unless it plunges deeply */
-    if (bound && pericentre(mb, rr, vr) > PLUNGE * rn && overfull(xc, mb, rapo, i, j)) return 0;
+    if (grpworst(xc, mb, rn, 0, NULL, tnow) >= 0) return 0;   /* (see grpworst) */
     return 2;
+}
+
+/* an upper bound on the size of group k (c.o.m. body j) at tnow: the
+ * apocentre of a Kepler binary, twice the outer apocentre plus the inner
+ * one for a frozen triple (cheap: no Kepler equation), the current size
+ * (diameter, or separation of a pair) of a regularised group */
+static double grpbound(int k, int j, double tnow)
+{
+    double eb, ra, ro;
+    if (bmode[k] == 1) {
+        pairorbit(bmass[k][0] + bmass[k][1], brel[k], brel[k] + 3, &eb, &ra);
+        return ra;
+    }
+    if (bmode[k] == 3) {
+        pairorbit(bmass[k][0] + bmass[k][1], brel[k], brel[k] + 3, &eb, &ra);
+        pairorbit(bmass[k][0] + bmass[k][1] + bmass[k][2], brel2[k], brel2[k] + 3, &eb, &ro);
+        return 2.0 * ro + ra;
+    }
+    int nm;
+    vec3 xm[KFMAX], um[KFMAX];
+    grpcomp(k, rp[j], vp[j], tnow, &nm, xm, um);
+    if (nm == 2) {
+        double d[3] = {xm[0][0] - xm[1][0], xm[0][1] - xm[1][1], xm[0][2] - xm[1][2]};
+        return norm3(d);
+    }
+    double sz = 0.0;
+    for (int l = 0; l < nm; l++) {
+        double d[3] = {xm[l][0] - rp[j][0], xm[l][1] - rp[j][1], xm[l][2] - rp[j][2]};
+        sz = fmax(sz, 2.0 * norm3(d));
+    }
+    return sz;
+}
+
+/* TWO GROUPS SEE EACH OTHER ONLY AS POINT MASSES (each one's stars feel
+ * the other's c.o.m.), so the interaction of their internal structures is
+ * left out, and it grows with the size of EACH. The group that perturbs a
+ * (possible) group of mass mb and size sz at xc most, measured with both
+ * sizes, g = 2 (sz + s_j)^3 m_j / (mb d^3); groups whose c.o.m. is one of
+ * the nex bodies in ex are left out. Returns its c.o.m. slot if g > gfew,
+ * otherwise -1. Only groups no wider than this one count: when two groups
+ * cannot be made one, it is the WIDER that is opened - its stars then see
+ * the tighter one exactly, through its perturber list - and never a hard
+ * binary because a wide pair came by (found: opening whichever group
+ * noticed first put hard binaries back into the main integrator, and the
+ * energy error up to 0.2). The same test decides opening a group, and
+ * making a pair or a multiple, so that a group it opens is not made again
+ * at once.
+ * (Found in cold fractals: two pairs 0.008 pc across, 0.015 pc apart, cost
+ * 2e-3 of the energy; the test was made only with the nearest body, and
+ * a single star was nearer.) */
+static int grpworst(const double xc[3], double mb, double sz, int nex, const int *ex, double tnow)
+{
+    int jw = -1;
+    double gw = gfew;
+    for (int kk = 0; kk < nbin; kk++) {
+        int j = bcm[kk], skip = 0;
+        if (j < 0 || j >= n) continue;
+        for (int e = 0; e < nex; e++)
+            if (ex[e] == j) skip = 1;
+        if (skip) continue;
+        double d[3] = {rp[j][0] - xc[0], rp[j][1] - xc[1], rp[j][2] - xc[2]};
+        double sj = grpbound(kk, j, tnow);
+        if (sj > sz) continue;          /* the wider of the two gives way (below) */
+        double dn = norm3(d), st = sz + sj;
+        double gj = 2.0 * st * st * st * m[j] / (mb * dn * dn * dn);
+        if (gj > gw) {
+            gw = gj;
+            jw = j;
+        }
+    }
+    return jw;
 }
 
 /* perturbation of the group whose c.o.m. body is i (a regularised group
@@ -919,8 +977,30 @@ static void tokepler(int i, double tnow)
     nclosed++;
 }
 
+/* body l, between steps, is about to be taken into a group at integer
+ * time t8: its state becomes its prediction to t8 (rp, vp, accurate to
+ * 5th order), its force derivatives are carried forward to t8, and its
+ * step ends there. (NBODY does the same when it starts a chain.) Only
+ * bodies that are then taken out of the main integration are synced. */
+static void syncbody(int l, int64_t t8)
+{
+    if (tk[l] == t8) return;
+    double dt = (double)(t8 - tk[l]) * tick, d2 = dt * dt / 2.0, d3 = d2 * dt / 3.0;
+    for (int c = 0; c < 3; c++) {
+        r[l][c] = rp[l][c];
+        v[l][c] = vp[l][c];
+        f0[l][c] += f1[l][c] * dt + f2e[l][c] * d2 + f3e[l][c] * d3;
+        f1[l][c] += f2e[l][c] * dt + f3e[l][c] * d2;
+        f2e[l][c] += f3e[l][c] * dt;
+    }
+    tk[l] = t8;
+    lev[l] = commlev(lev[l], t8);
+    dtk[l] = (int64_t)1 << (kmax - lev[l]);
+}
+
 /* try to make a regularised group out of the nb bodies in bod (single
- * stars or groups, all at integer time t8). It is made if it has 3 to
+ * stars or groups, at integer time t8 or between steps, and then
+ * predicted to it - see syncbody). It is made if it has 3 to
  * KFMAX stars, its perturbation by the rest of the cluster is below
  * gfew, and it would pay: the main integration must have at least
  * NFEWFAC*nm*(nm-1) bodies (see below for why), unless it is an
@@ -952,15 +1032,24 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
     int nm = 0;
     vec3 xm[KFMAX], um[KFMAX], xg[KFMAX], ug[KFMAX];
     double mm[KFMAX], mt = 0.0, xc[3] = {0, 0, 0}, vcm[3] = {0, 0, 0}, gsize = 0.0, gam, tp2;
+    /* a regularised group between the steps of its c.o.m. is known only
+     * through its interpolated dense output, which for a hard, eccentric
+     * binary can be wrong in energy by 1e-4 of its (large) binding energy;
+     * opened there, that becomes real (found: 2e-4 of the cluster's energy,
+     * a 38 Msun binary bound more tightly than the whole cluster). So it
+     * is taken in only at the end of its c.o.m.'s step. Single stars,
+     * Kepler binaries and frozen triples are exact at any time. */
+    for (int b = 0; b < nb; b++)
+        if (ib[bod[b]] >= 0 && bmode[ib[bod[b]]] == 2 && tk[bod[b]] != t8) return 0;
     for (int b = 0; b < nb; b++) {
         int i = bod[b], k = ib[i], nk = (k >= 0) ? bnum[k] : 1;
         if (nm + nk > KFMAX) return 0;
         if (k < 0) {
-            memcpy(xm[nm], r[i], sizeof(vec3));
-            memcpy(um[nm], v[i], sizeof(vec3));
+            memcpy(xm[nm], rp[i], sizeof(vec3));
+            memcpy(um[nm], vp[i], sizeof(vec3));
             mm[nm] = m[i];
         } else {
-            grpcomp(k, r[i], v[i], tnow, &nk, xg, ug);
+            grpcomp(k, rp[i], vp[i], tnow, &nk, xg, ug);
             if (nm + nk > KFMAX) return 0;
             for (int l = 0; l < nk; l++) {
                 memcpy(xm[nm + l], xg[l], sizeof(vec3));
@@ -971,8 +1060,8 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
         nm += nk;
         mt += m[i];
         for (int c = 0; c < 3; c++) {
-            xc[c] += m[i] * r[i][c];
-            vcm[c] += m[i] * v[i][c];
+            xc[c] += m[i] * rp[i][c];
+            vcm[c] += m[i] * vp[i][c];
         }
     }
     if (nm < 3) return 0;
@@ -986,7 +1075,23 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
         gsize = fmax(gsize, 2.0 * norm3(d));
     }
     gperturb(xc, vcm, mt, gsize, nb, bod, &gam, &tp2);
-    if (gam >= gfew) return 0;
+    /* a multiple need not be as isolated as a pair: its strong perturbers
+     * are followed exactly and feel its stars, so it is as accurate at
+     * gamma = 0.05 as at 0.005, only dearer. In dense knots two hard
+     * binaries meeting are never isolated together to gfew; they were
+     * opened instead, after meeting as point masses (found: 3e-4 in the
+     * energy each time, in cold fractals). Only for a group meeting a body,
+     * though: three single stars at gamma 0.03 are a wide, soft triple the
+     * main integrator follows easily (found: such triples in a Plummer
+     * sphere cost 2e-7) */
+    int hasgrp = 0;
+    for (int b = 0; b < nb; b++)
+        if (ib[bod[b]] >= 0) hasgrp = 1;
+    if (gam >= (hasgrp ? GMULT : 1.0) * gfew) return 0;
+    /* nor if another group would open it at once (grpworst, the same
+     * test as in bincheck): found making and opening the same triple
+     * 22,000 times in 0.2 Myr */
+    if (grpworst(xc, mt, gsize, nb, bod, tnow) >= 0) return 0;
     /* would it pay? */
     if (n < NFEWFAC * nm * (nm - 1)) {
         int stable, i1, i2, i3;
@@ -996,7 +1101,9 @@ static int tryfew(int nb, const int *bod, int64_t t8, double tnow)
         if (!stable) return 0;
         if (rcoll > 0.0 && qin < rcolli) return 0;
     }
-    /* make it: open the groups, then close all the stars together */
+    /* make it: bring every body to t8 (see syncbody), open the groups,
+     * then close all the stars together */
+    for (int b = 0; b < nb; b++) syncbody(bod[b], t8);
     int nl = 0, list[KFMAX], lk[KFMAX], nk;
     for (int b = 0; b < nb; b++) {
         int i = bod[b];
@@ -1050,11 +1157,8 @@ void bincheck(int64_t t8, double tnow)
          *    was made a group (kept in bein, which only frozen triples
          *    otherwise use), or at gamma > gfew; a receding unbound pair is
          *    never made a group, so it cannot flicker
-         *  - a group whose perturber list is full while the weakest perturber
-         *    kept is still strong: it has grown too big for its perturbers to
-         *    be counted, and the ones left off are missing from the energy
-         *    (found: unbound pairs that had drifted to 0.05 pc in a 200-star
-         *    cluster each put 2e-7 into the energy when finally opened) */
+         * (A group whose perturber list was full used to be let go too; the
+         * lists now grow as needed - see mkplist in ar.c.) */
         if (fewbody && mode == 2) {
             int letgo = 0;
             if (bnum[k] == 2 && gorb == HUGE_VAL) {
@@ -1064,12 +1168,6 @@ void bincheck(int64_t t8, double tnow)
                     vr[c] = bv[k][0][c] - bv[k][1][c];
                 }
                 if (dot3(rr, vr) > 0.0 && (gam > gfew || norm3(rr) > 2.0 * bein[k])) letgo = 1;
-            }
-            if (npl[k] == NPMAX) {
-                int j = plist[k][NPMAX - 1];
-                double d[3] = {r[j][0] - r[i][0], r[j][1] - r[i][1], r[j][2] - r[i][2]};
-                double dn = norm3(d), gj = 2.0 * gs * gs * gs * m[j] / (m[i] * dn * dn * dn);
-                if (gj > 100.0 * gpert) letgo = 1;
             }
             if (letgo) {
                 dbgbefore(tnow);
@@ -1081,8 +1179,8 @@ void bincheck(int64_t t8, double tnow)
         if (gam > 10.0 * gfew || (!fewbody && gorb > gopen)) {
             int done = 0;
             if (fewbody) {
-                int j = nearestx(i, -1);
-                if (j >= 0 && tk[j] == t8) {
+                int j = nearestx(i, -1);              /* on any block (see syncbody) */
+                if (j >= 0) {
                     int two[2] = {i, j};
                     dbgbefore(tnow);
                     done = tryfew(2, two, t8, tnow);
@@ -1107,24 +1205,21 @@ void bincheck(int64_t t8, double tnow)
          * energy.) Its stars cannot be made a group again while the other
          * group is that close, because its gamma alone is then above gfew. */
         if (fewbody && mode == 2) {
-            int j = nearestx(i, -1);
-            if (j >= 0 && ib[j] >= 0 && tk[j] == t8) {
-                double d[3] = {r[j][0] - r[i][0], r[j][1] - r[i][1], r[j][2] - r[i][2]};
-                double dn = norm3(d), gj = 2.0 * gs * gs * gs * m[j] / (m[i] * dn * dn * dn);
-                if (gj > gfew) {
-                    int two[2] = {i, j};
-                    dbgbefore(tnow);
-                    if (tryfew(2, two, t8, tnow)) {
-                        dbgafter("few(g+g)", tnow);
-                        break;
-                    }
-                    /* they cannot be one group: this one is opened, so that
-                     * the other sees its stars, exactly, as single stars */
-                    dbgbefore(tnow);
-                    opengroup(i, t8, tnow, &nm, list);
-                    dbgafter("open-gg", tnow);
+            /* any group, on any block, measured with both sizes (grpworst) */
+            int j = grpworst(rp[i], m[i], gs, 1, &i, tnow);
+            if (j >= 0) {
+                int two[2] = {i, j};
+                dbgbefore(tnow);
+                if (tryfew(2, two, t8, tnow)) {
+                    dbgafter("few(g+g)", tnow);
                     break;
                 }
+                /* they cannot be one group: this one is opened, so that
+                 * the other sees its stars, exactly, as single stars */
+                dbgbefore(tnow);
+                opengroup(i, t8, tnow, &nm, list);
+                dbgafter("open-gg", tnow);
+                break;
             }
         }
         /* changes of kind: no slots change, so several may be done */
@@ -1155,8 +1250,8 @@ void bincheck(int64_t t8, double tnow)
         int i = alist[ia], done = 0;
         if (i >= n || ib[i] >= 0 || tk[i] != t8) continue;
         if ((double)dtk[i] * tick >= dtclosei) continue;
-        int j = nearestx(i, -1);
-        if (j < 0 || tk[j] != t8) continue;
+        int j = nearestx(i, -1);                   /* on any block (see syncbody) */
+        if (j < 0) continue;
         int two[2] = {i, j};
         if (ib[j] >= 0) {
             if (fewbody) {                               /* the nearest body is a group */
@@ -1165,15 +1260,16 @@ void bincheck(int64_t t8, double tnow)
                 if (done) dbgafter("few(1+g)", tnow);
             }
         } else {
-            int st = pairstate(i, j);
+            int st = pairstate(i, j, tnow);
             if (st > 0) {
                 dbgbefore(tnow);
+                syncbody(j, t8);
                 closegroup(2, two, st, t8, tnow);
                 dbgafter(st == 1 ? "close" : "close-AR", tnow);
                 done = 1;
             } else if (fewbody) {
                 int l = nearestx(i, j);
-                if (l >= 0 && tk[l] == t8) {
+                if (l >= 0) {
                     int three[3] = {i, j, l};
                     dbgbefore(tnow);
                     done = tryfew(3, three, t8, tnow);
@@ -1200,7 +1296,7 @@ void binstart(double tnow)
         if (ib[i] < 0) {
             int j = nearestx(i, -1);
             if (j >= 0 && ib[j] < 0) {
-                int two[2] = {i, j}, st = pairstate(i, j);
+                int two[2] = {i, j}, st = pairstate(i, j, tnow);
                 if (st > 0) {
                     closegroup(2, two, st, 0, tnow);
                     done = 1;

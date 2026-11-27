@@ -35,7 +35,8 @@
  * tidal pull of a list of PERTURBERS: every body whose own perturbation
  *    gamma_j = 2 s^3 m_j / (M d_j^3)          (s group size, M its mass,
  *                                              d_j distance from the c.o.m.)
- * is above gpert (standard 1e-7; at most NPMAX bodies, the strongest). The
+ * is above gpert (standard 1e-7; any number of them - the list grows as
+ * needed - of which at most NPMAX, the strongest, are followed exactly). The
  * perturbers and the c.o.m. are predicted at any time from their own
  * Taylor series (the same 5th-order prediction as the main integrator),
  * and each star feels a_ext(x_i) minus the mass-weighted mean of a_ext
@@ -190,6 +191,7 @@ static int *plok = NULL;
 static int64_t *plcm8 = NULL;
 static double *plbase = NULL;
 static int npool = 0, nmarked = 0, pdirty = 1, phalloc = 0;
+static int *plcap = NULL;          /* ints allocated in each plist */
 
 static double tolt(void) { return 0.5 * tick; }
 static void arcapnew(int k, int64_t t8);
@@ -202,7 +204,9 @@ void aralloc(int ng)
     plok = xalloc(sizeof(int) * (size_t)ng);
     plcm8 = xalloc(sizeof(int64_t) * (size_t)ng);
     plbase = xalloc(sizeof(double) * (size_t)ng);
+    plcap = xalloc(sizeof(int) * (size_t)ng);
     for (int k = 0; k < ng; k++) {
+        plcap[k] = 0;
         dn[k].nn = dn[k].cap = dn[k].nm = 0;
         dn[k].caps = 0;
         plok[k] = 0;
@@ -230,9 +234,11 @@ void armovegroup(int from, int to)
     dn[from] = tmp;               /* (swapped, so no memory is lost) */
     dn[from].nn = 0;
     npl[to] = npl[from];
-    int *tl = plist[to];
+    int *tl = plist[to], tc = plcap[to];
     plist[to] = plist[from];
     plist[from] = tl;              /* (swapped, so no memory is lost) */
+    plcap[to] = plcap[from];
+    plcap[from] = tc;
     bend[to] = bend[from];
     bend8[to] = bend8[from];
     plok[to] = plok[from];
@@ -249,17 +255,18 @@ void premap(int from, int to)
 {
     for (int k = 0; k < nbin; k++) {
         if (bmode[k] != 2) continue;
-        int q = 0;
-        for (int e = 0; e < npl[k]; e++) {
-            int j = plist[k][e];
-            if (j == from) j = to;
-            if (j < 0 || j == bcm[k]) continue;
-            int dup = 0;
-            for (int e2 = 0; e2 < q; e2++)
-                if (plist[k][e2] == j) dup = 1;
-            if (!dup) plist[k][q++] = j;
+        int ef = -1, et = -1, np = npl[k];
+        for (int e = 0; e < np; e++) {
+            if (plist[k][e] == from) ef = e;
+            if (plist[k][e] == to) et = e;
         }
-        npl[k] = q;
+        if (ef < 0) continue;
+        if (to < 0 || to == bcm[k] || et >= 0) {
+            plist[k][ef] = plist[k][np - 1];        /* the order does not matter */
+            npl[k] = np - 1;
+        } else {
+            plist[k][ef] = to;
+        }
     }
     pdirty = 1;
 }
@@ -627,9 +634,7 @@ static int64_t mkplist(int k, arsys *s, const double *y, double t0)
 {
     int c = bcm[k], np = 0, nst = 0;
     int64_t h8 = tk[c] + dtk[c];
-    if (!plist[k]) plist[k] = xalloc(sizeof(int) * NPMAX);     /* e.g. after a restart */
-    double gs = arsize(s, y), xc[3], gam[NPMAX];
-    int idx[NPMAX];
+    double gs = arsize(s, y), xc[3];
     tset(c, s->cc, &s->ct0);
     tpos(s->cc, t0 - s->ct0, xc);
     double fac = 2.0 * gs * gs * gs / s->mt;
@@ -637,6 +642,8 @@ static int64_t mkplist(int k, arsys *s, const double *y, double t0)
      * otherwise just look again at the ones on the list */
     int full = !(plok[k] && plcm8[k] == tk[c] && plbase[k] == tbase);
     int ncand = full ? n : npl[k];
+    int *idx = xalloc(sizeof(int) * (size_t)(ncand + 1));
+    double *gam = xalloc(sizeof(double) * (size_t)(ncand + 1));
     for (int q = 0; q < ncand; q++) {
         int j = full ? q : plist[k][q];
         if (j == c || j < 0 || j >= n) continue;
@@ -647,27 +654,56 @@ static int64_t mkplist(int k, arsys *s, const double *y, double t0)
                      + f2e[j][q2] * d4 + f3e[j][q2] * d5 - xc[q2];
         double r2 = dot3(dd, dd), gj = fac * m[j] / (r2 * sqrt(r2));
         if (gj < gpert) continue;
-        if (np == NPMAX && gj <= gam[np - 1]) continue;
-        int p = np < NPMAX ? np++ : NPMAX - 1;      /* insertion, strongest first */
-        while (p > 0 && gam[p - 1] < gj) {
-            gam[p] = gam[p - 1];
-            idx[p] = idx[p - 1];
-            p--;
-        }
-        gam[p] = gj;
-        idx[p] = j;
+        gam[np] = gj;
+        idx[np++] = j;
     }
     if (full) {
         plok[k] = 1;
         plcm8[k] = tk[c];
         plbase[k] = tbase;
     }
+    /* any number of perturbers: the list grows as needed (in a dense
+     * clump a group can have a thousand, almost all weak; a fixed list
+     * that filled made groups be let go and made again, found to cost
+     * up to 5e-8 each time, and stopped tight pairs in dense knots being
+     * regularised at all). The strong ones go first: at most NPMAX of
+     * them, the strongest, are followed exactly; the rest are weak. */
+    int ns = 0;
+    for (int e = 0; e < np; e++)
+        if (gam[e] > GHORFAC * gpert) {
+            double tg = gam[e];
+            int ti = idx[e];
+            gam[e] = gam[ns];
+            idx[e] = idx[ns];
+            gam[ns] = tg;
+            idx[ns++] = ti;
+        }
+    if (ns > NPMAX) {                 /* keep the NPMAX strongest (selection) */
+        for (int a = 0; a < NPMAX; a++) {
+            int best = a;
+            for (int b = a + 1; b < ns; b++)
+                if (gam[b] > gam[best]) best = b;
+            double tg = gam[a];
+            int ti = idx[a];
+            gam[a] = gam[best];
+            idx[a] = idx[best];
+            gam[best] = tg;
+            idx[best] = ti;
+        }
+        ns = NPMAX;
+    }
+    if (np > plcap[k]) {
+        int nc = np + np / 2 + 16;
+        plist[k] = realloc(plist[k], sizeof(int) * (size_t)nc);
+        if (!plist[k]) die("out of memory for a perturber list");
+        plcap[k] = nc;
+    }
     /* the strong perturbers (first in the list) are followed exactly, and
      * set the horizon */
     for (int e = 0; e < np; e++) {
         int j = idx[e];
         plist[k][e] = j;
-        if (gam[e] <= GHORFAC * gpert) continue;
+        if (e >= ns) continue;
         s->pm[nst] = m[j];
         tset(j, s->pc[nst], &s->pt0[nst]);
         nst++;
@@ -700,6 +736,8 @@ static int64_t mkplist(int k, arsys *s, const double *y, double t0)
                     s->tt[w][q][q2] += id5 * (3.0 * d[q] * d[q2] - (q == q2 ? d2 : 0.0));
         }
     }
+    free(idx);
+    free(gam);
     return h8;
 }
 

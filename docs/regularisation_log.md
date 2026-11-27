@@ -291,3 +291,83 @@ a size limit on regularised groups, or resolving group perturbers into
 their stars.
 
 The 25 tests pass.
+
+
+## Addendum, 27 Nov (evening): multiples and sub-groups in clumpy clusters
+
+Asked: make HENDOS deal properly with multiples and sub-groups before the
+next benchmark, since the use cases have many multiple-star interactions
+in sub-clumps.
+
+### How it was tested
+Single fractal runs are too chaotic to compare one version with another:
+any change (even a diagnostic that rebuilds a perturber list) gives a
+different realisation, and one bad event in one realisation decides the
+energy error. So each version was run on **nine** cold fractals (1000
+stars, D = 1.6, Q = 0.3, seeds 1-9; generator as before) for 0.2 Myr, the
+violent early phase, then on seeds 1-3 for 1 Myr, plus the two Plummer
+checks. Bad events were found by rerunning the identical run with a
+read-only energy check (`grpcomp` must not `arshift` inside the check, or
+the trajectory changes), localising the loss in time, and auditing what was
+mispriced just before it.
+
+### What was wrong, and the fixes (all in groups.c and ar.c)
+1. **The two-groups test was made only if both centres of mass were on the
+   same block** - seldom, with block steps. Two hard binaries could then
+   come within 2.5 sizes of each other as point masses (up to 9e-4 of the
+   energy each time). Now made on any block; so are the tests with a
+   group's nearest single star, and the pair test. A body between steps is
+   taken into a group at its predicted state (`syncbody`).
+2. **Except a regularised group between steps**: it is known only through
+   its interpolated dense output, which for a hard binary can be wrong in
+   energy by 1e-4 of its binding energy - a 38 Msun binary bound more
+   tightly than the whole cluster cost 2e-4. Such a group is taken in only
+   at the end of its own step.
+3. **The two-groups test looked only at the nearest body, and only at this
+   group's size.** Now every group is looked at, with both sizes:
+   g = 2 (s_i + s_j)^3 m_j / (m_i d^3) > `gfew` (`grpworst`). The same test
+   is used when opening a group and when making a pair or a multiple, so a
+   group it opens is not made again at once.
+4. **When two groups cannot be merged, the wider one is opened**, never a
+   hard binary because a wide pair came by. (Opening whichever group
+   noticed first put hard binaries back into the Hermite integrator: 0.2.)
+5. **Merging needed the merged group to be isolated to `gfew`.** In dense
+   knots two binaries meeting never are. A group meeting another body is now
+   accepted below `GMULT` `gfew` = 0.05 (its strong perturbers are followed
+   exactly, so this costs time, not accuracy). Three single stars still need
+   `gfew` (soft triples cost 2e-7 in a Plummer sphere otherwise).
+6. **Perturber lists grow as needed** (any number of weak perturbers, at
+   most `NPMAX` = 256 followed exactly). With a fixed list of 256, groups in
+   dense regions were let go when it filled, and `overfull` (this morning)
+   refused tight pairs in dense knots altogether (one at gamma 4e-6, 18 AU
+   apart). Both rules are gone. The 1k Plummer sphere improved too.
+7. A loop made and opened the same triple 22,000 times in 0.2 Myr; fixed by
+   (3).
+
+Tried and parked (in `git stash`): growing groups up to 16 stars until
+isolated. In these fractals no set of up to 16 stars round a knot is
+isolated (clumps within clumps), so it found nothing and cost 2-3 times as
+much.
+
+### Results (largest |dE/E|)
+Nine fractals, 0.2 Myr (`eta` 0.01, `etap` 0.05):
+
+| seed | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| before | 2.4e-5 | **1.6e-4** | 4.5e-7 | 3.6e-6 | 1.7e-6 | 4.0e-6 | 1.9e-5 | 2.2e-6 | 9.8e-6 |
+| after | 2.6e-5 | 2.6e-5 | 6.5e-7 | 6.2e-6 | 9.2e-6 | 2.0e-6 | 6.0e-6 | 1.4e-6 | 4.8e-6 |
+
+Fractals 1-3, 1 Myr: before 7.0e-5, 1.8e-4, 6.8e-6 (181, 348, 177 s);
+after 2.6e-5, 4.0e-5, 1.5e-5 (211, 362, 165 s). Seed 1 with neighbours
+(`etar` 0.0025): 2.8e-5 in 167 s.
+
+Plummer 1k (10 Myr): 5.3e-8 -> 6.3e-9. Plummer with 500 binaries: 4e-8 ->
+1.3e-8.
+
+The worst case is now a few 1e-5 instead of 2e-4. What is left, as far as
+is known, is the point-mass treatment of groups for each other below the
+`gfew` threshold, and sub-clumps where every group is perturbed. The full
+fix for the first is still to resolve group perturbers into their stars
+inside each other's integration.
+
+The 25 tests pass.

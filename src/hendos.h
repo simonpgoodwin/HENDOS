@@ -30,7 +30,8 @@
 #endif
 
 #define KFMAX 6            /* most stars in a group */
-#define NPMAX 256          /* most perturbers of a regularised group (ar.c) */
+#define NPMAX 256          /* most perturbers of a regularised group followed exactly (ar.c);
+                              any number more are weak (tidal tensor) */
 #define NTYPES 5           /* particle types */
 #define NSTR 512
 typedef double vec3[3];
