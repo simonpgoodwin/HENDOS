@@ -155,6 +155,7 @@ void acmoverow(int src, int dst);
 void acmoved(int src, int dst);
 void acremoved(int j, int irep);
 void acadded(int jn, int i0);
+void acjoining(int nm, const int *list, int64_t t8);
 /* ar.c */
 void aralloc(int ng);
 void arreset(int k);

@@ -118,8 +118,10 @@ Options:
 kira treats unperturbed binaries and multiples specially too, so `direct` and
 `neighbours` are the fair comparisons with it. `nofew` and `nobin` are there
 to compare HENDOS with itself. In `neighbours` mode the regular-force
-parameter `etar` is set to half of `eta` in every run, so the two are
-tightened together (`ETAR_OVER_ETA` in the script).
+parameter `etar` is set to a quarter of `eta` in every run, so the two are
+tightened together (`ETAR_OVER_ETA` in the script). With half of `eta`, a
+1000-star Plummer sphere (10 Myr, `eta` = 0.01) gave 2e-6 against 5e-8 with
+direct summation; with a quarter, 6e-8 in 24 s against direct's 37 s.
 
 The modes are the table `HENDOS_MODES` near the top of `bench_kira.py`; to add
 one (a different `theta` for the tree, say), add a line there and, if it needs
@@ -147,7 +149,7 @@ a parameter that is not yet in it, a line to `HENDOS_PARAMS` just above.
 
 HENDOS has two timestep parameters besides `eta`: `etap` (the pairwise
 free-fall and flyby limit) and, with neighbours, `etar`. The script ties both
-to `eta` (`etap` = 5 `eta`, `etar` = 0.5 `eta`; `ETAP_OVER_ETA` and
+to `eta` (`etap` = 5 `eta`, `etar` = 0.25 `eta`; `ETAP_OVER_ETA` and
 `ETAR_OVER_ETA` in `bench_kira.py`) so that all three tighten together. In the
 first benchmarks `etap` was left at 0.2, and the close encounters then set a
 floor to the accuracy: cutting `eta` from 0.04 to 0.01 reduced the error only

@@ -229,3 +229,65 @@ cost is opening a group (up to 1.6e-8), which is the next thing to look at
 if the floor matters.
 
 The 25 tests pass.
+
+
+## Addendum, 27 Nov (later): the neighbour scheme in sub-clumps
+
+Asked: does the Ahmad-Cohen scheme go wrong in the sub-clumps (10 to 100
+stars) of a fractal? In the benchmark the neighbour runs were 2 to 10
+times worse than direct on all nine fractal runs.
+
+Test: fractal seed 1 (1000 stars), with the regular-force prediction
+error (how far the regular force had moved from its linear prediction by
+each regular step, as a fraction of the total force) written out, and
+each star matched to its clump by friends-of-friends (linking length
+0.1 pc) on the snapshots.
+
+- **The clumps themselves are fine.** Stars in clumps of 10-30 and 31-100
+  have median errors of 1e-6 to 3e-6 (99% below 6e-4), no worse than
+  stars in big clumps. Stars between the clumps have the largest relative
+  errors (median 3e-4), but their forces are weak and smooth.
+- **There was a bug in the list bookkeeping.** 0.1% of regular steps found
+  the regular force wrong by more than 10% of the total force. When stars
+  are made a group (or merged), the body that takes their places in the
+  neighbour lists carries the mass of all of them. A star whose list held
+  only some of them then felt the others twice - once in the irregular
+  force (through the c.o.m.), once in the regular force - until its next
+  regular step. In sub-clumps, where groups are made all the time among
+  stars with about 37 neighbours, that happened constantly. Fixed by
+  `acjoining` (ac.c), called from `closegroup` and `mergestars`: the
+  pull of the stars that were not in the list is moved from the regular to
+  the irregular force. Regular steps wrong by more than 10%: 0.1% -> none;
+  by more than 1%: 0.28% -> 0.001%.
+
+Results (fractal, 1 Myr, `eta` 0.01, `etap` 0.05, `etar` 0.005):
+
+| seed | direct | neighbours, fixed |
+|---|---|---|
+| 1 | 7.0e-5, 181 s | 1.3e-5, 165 s (2e-4 before the fix) |
+| 2 | 1.8e-4, 348 s | 1.7e-5, 303 s |
+| 3 | 6.8e-6, 177 s | 1.0e-4, 184 s |
+
+The occasional 1e-4 jumps, which turn up in either mode, are not the
+neighbour scheme: they are group-group bookkeeping (next point).
+
+Also: `NACMIN` raised from 150 to 200 (user's request); the neighbour
+restart test moved from 192 to 256 stars so that it still tests the
+scheme; the benchmark's `etar` is now `eta`/4 (Plummer 1k: 2e-6 at
+`eta`/2, 6e-8 at `eta`/4, direct 5e-8; 24 s against 37 s for direct).
+
+**Lead, not fixed: groups that grow to 1 pc.** The large jumps at group
+openings in fractals come from regularised groups that have swung out to
+about 1 pc (wide pairs can be bound in a cold fractal, and gamma stays
+small in its empty parts). Such a group sees the other groups (dozens, a
+few pc away) only as point masses, and the missing terms made the
+energy wrong by up to 6e-4 until it was opened. A wider group-group test
+(any group, with both sizes, 2(s_i+s_j)^3 m_j/(m_i d^3) > gfew, used for
+opening and making groups alike) was tried: fractal seed 1 went from
+7e-5 to 2e-5 but seed 2 from 2e-5 to 2e-4, with hundreds of openings
+with jumps of up to 5.6e-4. It was taken out; the attempt is kept in
+`/tmp/groups_ggwide.c` for this session only. A cleaner fix is probably
+a size limit on regularised groups, or resolving group perturbers into
+their stars.
+
+The 25 tests pass.

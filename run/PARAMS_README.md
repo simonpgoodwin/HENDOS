@@ -271,11 +271,12 @@ the slow part is extrapolated. It is worth using above a thousand stars or so. T
 
 ### `useac` (switch, standard value `.false.`)
 `.true.` uses the neighbour scheme.
-With fewer than 150 stars the code switches the neighbour scheme off, says so
+With fewer than 200 stars the code switches the neighbour scheme off, says so
 on the screen at the start, and carries on with plain direct summation: for so
 few stars a neighbour list is a large part of the whole system and the scheme
-saves nothing. The value 150 is an estimate of the break-even from a model of
-the code, compared at equal energy error: counting pair interactions the
+saves nothing. The value 200 is set a little above the break-even, to be
+safe. The break-even was estimated from a model of the code, compared at
+equal energy error: counting pair interactions the
 scheme costs 1.36 times direct summation at 30 stars, 0.98 at 60, 0.87 at 100,
 0.72 at 200, 0.60 at 400 and 0.49 at 800, and a neighbour sum costs more per
 pair than a full sum, which moves the break-even from 60 up to somewhere
@@ -297,7 +298,9 @@ The accuracy parameter of the timestep on which the slow (regular) force is
 recomputed, used in the same formula as `eta`. Smaller is more accurate and
 slower. If the energy error with the neighbour scheme is worse than without
 it, reduce `etar` first: in tests halving it twice (0.02 to 0.005) reduced the
-energy error by about 200.
+energy error by about 200. A quarter of `eta` is a good choice: on a
+1000-star Plummer sphere (10 Myr, `eta` = 0.01), `etar` = 0.0025 gave
+6e-8, against 5e-8 with direct summation, in two-thirds of the time.
 
 ## `&tree` - Barnes-Hut tree forces
 For large numbers of particles. Instead of summing the force from every other

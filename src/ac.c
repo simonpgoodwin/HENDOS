@@ -61,14 +61,14 @@
 #include <omp.h>
 #include "hendos.h"
 
-#define NACMIN 150   /* below this many stars the scheme is switched off */
+#define NACMIN 200   /* below this many stars the scheme is switched off */
 
 /* the neighbour scheme is switched off, and the user told, if there are
  * fewer than NACMIN stars: a neighbour list is then a large part of the
  * whole system, so the scheme costs as much as plain direct summation.
  * Called once the number of stars is known, before acalloc.
  *
- * Where NACMIN = 150 comes from. A Python model of this code was run on
+ * Where NACMIN comes from. A Python model of this code was run on
  * equal-mass Plummer spheres of 30 to 800 stars with and without the
  * scheme, with etar = 0.005 so that the energy errors were the same,
  * and the pair interactions counted. Cost of the scheme / cost of
@@ -82,6 +82,9 @@
  * so the scheme breaks even at about 60 stars if w = 1, 110 if w = 2
  * and 150 if w = 3. w has not been measured (the code had not been
  * compiled when this was written).
+ *
+ * NACMIN is 200, a margin above the largest of those break-evens, at the
+ * user's request (27 Nov 2026), to be safe.
  *
  * >>> CHANGE HERE (NACMIN) once the break-even has been measured with
  *     the compiled code: benchmark/bench_kira.py --skip-kira --modes
@@ -444,5 +447,55 @@ void acadded(int jn, int i0)
         for (int k = 0; k < nnb[i]; k++)
             if (list[k] == i0) has = 1;
         if (has && nnb[i] < nnbmax) list[nnb[i]++] = jn;
+    }
+}
+
+/* the nm bodies in list (all at integer time t8, positions rp, vp) are
+ * about to become one body: a group's c.o.m., or a merged star, in the
+ * slot of one of them. Every list that holds any of them will then hold
+ * that one body, which carries the mass of all of them (see acremoved).
+ * So in a list that held only some of them, the others move from the
+ * regular force, where they still are, into the irregular force; their
+ * pull is taken out of the regular force here, and put into the
+ * irregular force kept for the corrector, so that it is counted once.
+ * (Found in cold fractals: stars in sub-clumps whose lists held one star
+ * of a pair being made a group felt the other star twice until their
+ * next regular step - 0.1% of regular steps found the regular force
+ * wrong by more than 10% of the total force.) */
+void acjoining(int nm, const int *list, int64_t t8)
+{
+#pragma omp parallel for schedule(dynamic, 16) if (n >= nompj)
+    for (int i = 0; i < n; i++) {
+        int *li = nbl + (size_t)i * (size_t)nnbmax, inl[KFMAX], nin = 0, skip = 0;
+        if (!acok[i]) continue;
+        for (int l = 0; l < nm; l++) {
+            if (list[l] == i) skip = 1;
+            inl[l] = 0;
+            for (int k = 0; k < nnb[i]; k++)
+                if (li[k] == list[l]) inl[l] = 1;
+            nin += inl[l];
+        }
+        if (skip || nin == 0 || nin == nm) continue;
+        double tr = (double)(t8 - treg[i]) * tick, ti = (double)(t8 - tk[i]) * tick;
+        for (int l = 0; l < nm; l++) {
+            if (inl[l]) continue;
+            int j = list[l];
+            double d[3], dv[3];
+            for (int q = 0; q < 3; q++) {
+                d[q] = rp[j][q] - rp[i][q];
+                dv[q] = vp[j][q] - vp[i][q];
+            }
+            double r2 = dot3(d, d) + eps2, rinv = 1.0 / sqrt(r2), mr3 = m[j] * rinv * rinv * rinv;
+            double rv = 3.0 * dot3(d, dv) / r2;
+            for (int q = 0; q < 3; q++) {
+                double a = mr3 * d[q], jk = mr3 * (dv[q] - rv * d[q]);
+                /* the regular force is fr + frd (t - treg), linear */
+                fr[i][q] -= a - jk * tr;
+                frd[i][q] -= jk;
+                /* the irregular force at the star's last step, tk */
+                fi[i][q] += a - jk * ti;
+                fid[i][q] += jk;
+            }
+        }
     }
 }

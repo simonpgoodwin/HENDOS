@@ -150,7 +150,7 @@ HENDOS_MODES = {
     'nobin':      dict(label='HENDOS no binaries', colour='#6250d6', marker='P',
                        closebinaries=False, fewbody=False, useac=False, usetree=False),
 }
-ETAR_OVER_ETA = 0.5
+ETAR_OVER_ETA = 0.25   # 0.5 left the neighbour runs 40x worse than direct on a smooth Plummer sphere
 ETAP_OVER_ETA = 5.0
 KIRA_STYLE = dict(label='kira', colour='#eb6834', marker='s')
 

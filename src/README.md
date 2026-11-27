@@ -189,8 +189,8 @@ Files
 
 ## ac.c - Ahmad-Cohen neighbour scheme (only when `useac` is on)
 The scheme is explained at the top of the file.
-- `accheck(nstars)` - switches the scheme off, and says so, below 150 stars.
-  Where 150 comes from is explained above it.
+- `accheck(nstars)` - switches the scheme off, and says so, below 200 stars.
+  Where that comes from is explained above it.
 - `acalloc`, `acsetrs0` - sizes of the lists and allocation; first guess of
   the neighbour-sphere radius.
 - `nbsum(...)` (internal) - force from the stars in a list.
@@ -205,6 +205,10 @@ The scheme is explained at the top of the file.
 - `acmoverow(src,dst)`, `acmoved(src,dst)`, `acremoved(j,irep)`,
   `acadded(jn,i0)` - keep every list right when a body is moved, removed or
   created.
+- `acjoining(nm,list,t8)` - called just before stars are made a group or
+  merged: in a list that holds only some of them, the pull of the others is
+  moved from the regular force to the irregular force, because the one body
+  that takes their places in the list carries the mass of all of them.
 
 ## tree.c - Barnes-Hut tree (only when `usetree` is on)
 How the tree works, the force formulae and how it is shared over the threads

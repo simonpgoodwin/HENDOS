@@ -177,7 +177,7 @@
   useac  = .false.         ! [.false.] .true. = use the neighbour scheme
                            !   (it is switched off, with a note on
                            !   the screen, if
-                           !   there are fewer than 150 stars
+                           !   there are fewer than 200 stars
 
   nnbopt = 0               ! [0]  number of neighbours wanted per star,
                            !   0 = automatic, (N/8)^(3/4)

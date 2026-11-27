@@ -304,7 +304,7 @@ sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
   summation in its Hermite form. Each star has a neighbour list; the neighbour
   (irregular) force is summed every step and the rest (regular force) only on
   longer regular steps, being extrapolated linearly in between and corrected by
-  a Hermite corrector over the regular step. Switched off (with a note on the screen) for fewer than 150 stars.
+  a Hermite corrector over the regular step. Switched off (with a note on the screen) for fewer than 200 stars.
 - **Restart files** (`trestart`, `restart`): the complete state in binary,
   written at output times, from which a run carries on exactly. The file is a
   list of named sections that a reader can skip, so new physics can add its own.
@@ -388,7 +388,7 @@ neighbour scheme, the old few-body integrator); the regularised groups were
 checked in C against very accurate direct integrations. The regression-test
 limits were first set from those models, and some have since been set from
 the C runs.
-The break-even values of the neighbour scheme (150 stars) and of
+The break-even values of the neighbour scheme (200 stars) and of
 regularised groups (`NFEWFAC`) have not yet been measured on real timings.
 HENDOS has been compared with kira (`benchmark/`).
 The initial conditions generator (Fortran) and the archived Fortran N-body

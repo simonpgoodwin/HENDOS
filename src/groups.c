@@ -484,6 +484,10 @@ static void mergestars(int i, int j, int64_t t8, double tnow)
         vcm[k] = (mi * vp[i][k] + mj * vp[j][k]) / mn;
     }
     double rsep = norm3(rr);
+    if (useac) {
+        int two[2] = {i, j};
+        acjoining(2, two, t8);           /* lists that held only one of the two */
+    }
     emerged += 0.5 * mi * mj / mn * dot3(vr, vr) - mi * mj / sqrt(rsep * rsep + eps2);
     int idn = mj > mi ? id[j] : id[i];
     int tn = groupmergetype(itype[i], itype[j]);
@@ -594,6 +598,7 @@ static void closegroup(int nm, const int *list, int mode, int64_t t8, double tno
     int k = nbin++, lo = list[0];
     double mb = 0.0, xc[3] = {0, 0, 0}, vcm[3] = {0, 0, 0}, fc[4][3], gsize = 0.0, ebind;
     double gam, tp2;
+    if (useac) acjoining(nm, list, t8);    /* lists that held only some of the stars */
     memset(fc, 0, sizeof fc);
     bnum[k] = nm;
     bmode[k] = mode;
