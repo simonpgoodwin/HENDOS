@@ -166,7 +166,8 @@ cause was the perturber list overflowing. Mild unbound flybys at about
 2e-3 pc had been regularised, had drifted apart within one centre-of-mass
 step, and by then had more perturbers than the 64 the list held. Fixes:
 - **Unbound pairs are regularised only for a plunge**: two-body pericentre
-  less than a tenth of the current separation.
+  less than a tenth of the current separation (now a thousandth - see the
+  27 Nov addendum).
 - **The centre of mass of an unbound pair steps at least every `etap` times
   the pair's flyby time r/v.**
 - **A receding unbound pair is let go** once it is twice as far apart as when
@@ -186,3 +187,45 @@ Results (largest dE/E), before -> after:
 | Plummer with 500 binaries | 3e-7 | 4e-8 |
 
 The 25 tests pass, also under the sanitisers.
+
+
+## Addendum, 27 Nov: the Plummer floor
+
+The user's kira benchmark showed HENDOS direct stuck at an energy error of
+1e-7 to 1e-6 on smooth Plummer spheres whatever eta was, where kira got to
+1e-8. On a 1000-star equal-mass Plummer sphere (10 Myr, eta 0.01) the
+error was 2.1e-7 with `fewbody` on and 1.4e-8 with it off, and lowering
+`gpert` made no difference.
+
+The cause was flicker. With HENDOS_DEBUG, one wide eccentric binary
+(apocentre 0.03 pc, pericentre 0.004 pc, period about 0.14 Myr) was being
+made a regularised group at every pericentre, where its gamma dropped
+below `gfew`, and let go on the way out because its perturber list was
+full (at 0.03 pc, every star in the cluster is a perturber above 100
+`gpert`). That happened 5400 times in 10 Myr, and each close and let-go
+left 1e-9 to 5e-8 behind.
+
+Fixes (groups.c):
+- **`overfull()`**: a bound pair is not regularised if more than `NPMAX`
+  bodies would have gamma > 100 `gpert` at its apocentre size (so the
+  list-full rule would let it go at once), unless it plunges deeply. The
+  Hermite integrator follows such pairs perfectly well.
+- **`PLUNGE` = 1e-3** (a `>>> CHANGE HERE` define): an unbound pair (or an
+  overfull bound one) is regularised only if its pericentre is under a
+  thousandth of its separation. On its own this made no difference to the
+  Plummer sphere, but the plunges that matter in cold fractals have
+  pericentres of 1e-6 of the separation, so nothing is lost.
+
+Results:
+
+| run | before | after |
+|---|---|---|
+| 1000-star Plummer (fewbody off: 1.4e-8) | 2.0e-7 | 5.3e-8 (2.9e-9 in a second build) |
+| Plummer with 500 binaries | 4.2e-8 | 4.2e-8 |
+| fractals 1-3 | 1e-5 to 1e-4 | 1.7e-5 to 3.2e-5 |
+
+Only about ten group events are left in the Plummer run. The largest
+cost is opening a group (up to 1.6e-8), which is the next thing to look at
+if the floor matters.
+
+The 25 tests pass.

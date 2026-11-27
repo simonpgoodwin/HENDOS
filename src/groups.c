@@ -33,7 +33,7 @@
  * nearest neighbour j is on the same block. Then:
  * CLOSE   i, j single, bound, g_orb < gclose              -> 1 Kepler
  *         i, j single, bound or plunging (unbound and coming together,
- *         pericentre < separation / 10), g_cur < gfew     -> 2 (a pair)
+ *         pericentre < separation / 1000), g_cur < gfew   -> 2 (a pair)
  * FEW     otherwise the pair and the next nearest body are tried as a
  *         group; so is a star and a nearby group. Made if its own
  *         g_cur < gfew and it pays (see tryfew)            -> 2
@@ -91,6 +91,8 @@
 #include "hendos.h"
 
 #define NFEWFAC 2    /* a multiple of nm stars needs NFEWFAC*nm*(nm-1) bodies to pay */
+#define PLUNGE 1.0e-3  /* >>> CHANGE HERE: an unbound pair is regularised only if its
+                          pericentre < PLUNGE * its separation (see pairstate) */
 
 static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list);
 static int bmode_last_open = 0;
@@ -773,7 +775,7 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
  * apocentre reaches out among other stars is still regularised while it
  * plunges through pericentre, and let go when it swings out again; an
  * unbound pair is regularised for a close hyperbolic encounter (only a
- * plunge, whose pericentre is less than a tenth of its separation). Either,
+ * deep plunge, pericentre < PLUNGE = 1/1000 of its separation). Either,
  * integrated directly, can need steps shorter than the shortest level
  * (kmax) and ruin the energy; regularised, any pericentre is easy. With
  * the perturbers treated properly (ar.c) it does not matter that the
@@ -783,6 +785,22 @@ static void opengroup(int i, int64_t t8, double tnow, int *nm, int *list)
  * regularised pair, which watches for it, or with fewbody off it is left
  * in the main integration, and collcheck merges the stars (or stops the
  * run) when they actually meet - not before. */
+/* would a group of mass mb, size sz at xc have more than NPMAX bodies
+ * with gamma > 100 gpert? Then its list fills and it is let go at once
+ * (the rule in bincheck), so it is not worth making a group at all */
+static int overfull(const double xc[3], double mb, double sz, int i, int j)
+{
+    int cnt = 0;
+    double f = 2.0 * sz * sz * sz / (mb * 100.0 * gpert);
+    for (int l = 0; l < n; l++) {
+        if (l == i || l == j || m[l] <= 0.0) continue;
+        double d[3] = {r[l][0] - xc[0], r[l][1] - xc[1], r[l][2] - xc[2]};
+        double d2 = dot3(d, d);
+        if (f * m[l] > d2 * sqrt(d2) && ++cnt >= NPMAX) return 1;
+    }
+    return 0;
+}
+
 static int pairstate(int i, int j)
 {
     if (ib[i] >= 0 || ib[j] >= 0) return 0;
@@ -797,12 +815,15 @@ static int pairstate(int i, int j)
     double rn = norm3(rr);
     int two[2] = {i, j}, bound = ebind < 0.0;
     if (!bound && (!fewbody || dot3(rr, vr) >= 0.0)) return 0;
-    /* an unbound pair only for a plunge: its pericentre well inside its
-     * separation now. A gentle flyby the main integrator follows easily,
-     * and regularised it only gathers more perturbers than the list holds
-     * (found: flybys at 2e-3 pc in a 200-star cluster each put 1e-7 into
-     * the energy) */
-    if (!bound && pericentre(mb, rr, vr) > 0.1 * rn) return 0;
+    /* an unbound pair only for a deep plunge: its pericentre far inside its
+     * separation now (PLUNGE). An ordinary close passage the main
+     * integrator follows easily (to 1e-9 in a Plummer sphere), and
+     * regularised it only leaves a little error behind each time it is
+     * made a group and let go (found: with PLUNGE = 0.1, a 1000-star
+     * Plummer sphere made 57 such groups in 10 Myr and the energy error
+     * went from 1e-8 to 2e-7; the plunges that wreck the energy, in cold
+     * fractals, have pericentres a millionth of the separation) */
+    if (!bound && pericentre(mb, rr, vr) > PLUNGE * rn) return 0;
     /* gamma scales as size^3, so one sum gives it for both sizes */
     gperturb(xc, vcm, mb, rn, 2, two, &gam, &tp2);
     if (bound) {
@@ -810,8 +831,15 @@ static int pairstate(int i, int j)
         int collide = rcoll > 0.0 && pericentre(mb, rr, vr) < rcolli;
         if (gapo < gclose && !collide) return 1;
     }
-    if (fewbody && gam < gfew) return 2;
-    return 0;
+    if (!fewbody || gam >= gfew) return 0;
+    /* a wide bound pair whose list would fill at apocentre: it is let go
+     * as soon as it swings out, and made a group again at the next
+     * pericentre (found: a 0.03 pc binary in a 1000-star Plummer sphere,
+     * made a group and let go every orbit, 5400 times in 10 Myr, put the
+     * energy error up from 1e-8 to 2e-7). The main integrator follows it
+     * well, so leave it there - unless it plunges deeply */
+    if (bound && pericentre(mb, rr, vr) > PLUNGE * rn && overfull(xc, mb, rapo, i, j)) return 0;
+    return 2;
 }
 
 /* perturbation of the group whose c.o.m. body is i (a regularised group

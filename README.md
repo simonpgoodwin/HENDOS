@@ -266,7 +266,9 @@ sigma_3D). How to add a new one is described in `src/io.c`, above `ananame`.
   the start. Candidates: stars with steps < `dtclose`. Requires eps = 0.
 - **Regularised groups** (`fewbody` in `&binaries`, `src/ar.c`): a perturbed
   binary, a close two-body encounter (bound, or an unbound plunge whose
-  pericentre is under a tenth of its separation), or a compact group of up
+  pericentre is under a thousandth of its separation; a wide bound pair whose
+  perturber list would overflow at apocentre is left to the Hermite
+  integrator unless it plunges that deeply), or a compact group of up
   to 6 stars - a binary meeting a star or another binary - whose perturbation
   at its current size is below `gfew` is replaced by one centre-of-mass body,
   and its stars are integrated by algorithmic regularisation: the
